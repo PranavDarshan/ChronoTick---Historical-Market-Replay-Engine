@@ -12,9 +12,6 @@ import { useReplaySocket } from "../hooks/useReplaySocket"
 import { useReplayStore } from "../store/replayStore"
 
 export default function Dashboard() {
-  /* ======================
-     UI STATE
-  ====================== */
   const [symbols, setSymbols] = useState<string[]>([])
   const [symbol, setSymbol] = useState("")
   const [start, setStart] = useState("2015-01-09T09:15")
@@ -22,24 +19,16 @@ export default function Dashboard() {
   const [timeScale, setTimeScale] = useState(6000)
   const [gapScale, setGapScale] = useState(100000)
   const [playing, setPlaying] = useState(false)
+  const [isStopped, setIsStopped] = useState(false) // Track if user manually stopped
 
-  /* ======================
-     CHART REFS
-  ====================== */
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<any>(null)
   const initializedRef = useRef(false)
 
-  /* ======================
-     STORE
-  ====================== */
   const candles = useReplayStore((s) => s.candles)
-  const resetStore = useReplayStore((s) => s.reset)
 
-  /* ======================
-     FETCH SYMBOLS (ONCE)
-  ====================== */
+  /* ===== SYMBOLS ===== */
   useEffect(() => {
     fetch("http://127.0.0.1:8000/symbols")
       .then((r) => r.json())
@@ -49,24 +38,20 @@ export default function Dashboard() {
           setSymbol(d.symbols[0])
         }
       })
-      .catch(console.error)
   }, [])
 
-  /* ======================
-     SOCKET
-  ====================== */
-  useReplaySocket({
+  /* ===== SOCKET ===== */
+  const { closeSocket, isConnected } = useReplaySocket({
     symbol,
     start,
     end,
     timeScale,
     gapScale,
-    playing: playing,
+    playing,
+    enabled: !isStopped, // Only connect if not manually stopped
   })
 
-  /* ======================
-     CHART INIT (ONCE)
-  ====================== */
+  /* ===== CHART INIT ===== */
   useEffect(() => {
     if (!containerRef.current || chartRef.current) return
 
@@ -74,14 +59,54 @@ export default function Dashboard() {
       layout: {
         background: { color: "#020617" },
         textColor: "#e5e7eb",
+        fontSize: 12,
       },
       grid: {
         vertLines: { color: "#1e293b" },
         horzLines: { color: "#1e293b" },
       },
+      rightPriceScale: {
+        borderColor: "#334155",
+        scaleMargins: {
+          top: 0.1,
+          bottom: 0.1,
+        },
+      },
       timeScale: {
+        borderColor: "#334155",
         timeVisible: true,
         secondsVisible: true,
+        rightOffset: 5,
+        barSpacing: 3,
+        minBarSpacing: 0.5,
+        fixLeftEdge: false,
+        fixRightEdge: false,
+      },
+      crosshair: {
+        mode: 1,
+        vertLine: {
+          color: "#64748b",
+          width: 1,
+          style: 2,
+          labelBackgroundColor: "#3b82f6",
+        },
+        horzLine: {
+          color: "#64748b",
+          width: 1,
+          style: 2,
+          labelBackgroundColor: "#3b82f6",
+        },
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: true,
       },
       autoSize: true,
     })
@@ -96,61 +121,64 @@ export default function Dashboard() {
 
     chartRef.current = chart
     seriesRef.current = series
+
+    // Cleanup
+    return () => {
+      chart.remove()
+      chartRef.current = null
+      seriesRef.current = null
+    }
   }, [])
 
-  /* ======================
-     DATA → CHART (CORRECT)
-  ====================== */
+  /* ===== DATA ===== */
   useEffect(() => {
-    if (!seriesRef.current) return
-    if (candles.length === 0) return
+    if (!seriesRef.current || candles.length === 0) return
 
     if (!initializedRef.current) {
-      console.log("[Chart] Initial load", candles.length)
-
       seriesRef.current.setData(candles as CandlestickData<Time>[])
-      chartRef.current?.timeScale().fitContent()
-
       initializedRef.current = true
     } else {
-      const last = candles[candles.length - 1]
-      seriesRef.current.update(last as CandlestickData<Time>)
+      seriesRef.current.update(
+        candles[candles.length - 1] as CandlestickData<Time>
+      )
+    }
+    
+    // Always show all candles by zooming out to fit
+    if (chartRef.current && candles.length > 0) {
+      chartRef.current.timeScale().setVisibleRange({
+        from: candles[0].time as Time,
+        to: candles[candles.length - 1].time as Time,
+      })
     }
   }, [candles])
 
-  /* ======================
-     PLAY / PAUSE HANDLERS
-  ====================== */
-  const handlePlay = () => {
-    console.log("[UI] Play")
-
-    // 🔥 HARD RESET
+  const handleStop = () => {
     setPlaying(false)
-    resetStore()
+    closeSocket()
     initializedRef.current = false
-    seriesRef.current?.setData([])
-
-    // Allow state flush
-    setTimeout(() => setPlaying(true), 0)
+    setIsStopped(true) // Mark as manually stopped
   }
 
-  const handlePause = () => {
-    console.log("[UI] Pause")
-    setPlaying(false)
+  const handleConnect = () => {
+    setIsStopped(false) // Re-enable connection
+    initializedRef.current = false
   }
 
-  /* ======================
-     UI
-  ====================== */
+  // Auto-reconnect when symbol changes (only if not manually stopped)
+  useEffect(() => {
+    if (!isStopped) {
+      initializedRef.current = false
+    }
+  }, [symbol, start, end, timeScale, gapScale, isStopped])
+
   return (
-    <div
-      style={{
-        height: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        background: "#020617",
-      }}
-    >
+    <div style={{ 
+      height: "100vh", 
+      display: "flex", 
+      flexDirection: "column",
+      overflow: "hidden",
+      background: "#020617"
+    }}>
       <TopBar
         symbols={symbols}
         symbol={symbol}
@@ -164,11 +192,21 @@ export default function Dashboard() {
         gapScale={gapScale}
         setGapScale={setGapScale}
         playing={playing}
-        onPlay={handlePlay}
-        onPause={handlePause}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onStop={handleStop}
+        onConnect={handleConnect}
+        isConnected={isConnected}
+        isStopped={isStopped}
       />
-
-      <div ref={containerRef} style={{ flex: 1 }} />
+      <div 
+        ref={containerRef} 
+        style={{ 
+          flex: 1,
+          position: "relative",
+          minHeight: 0
+        }} 
+      />
     </div>
   )
 }

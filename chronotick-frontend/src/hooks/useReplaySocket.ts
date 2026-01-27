@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useCallback, useState } from "react"
 import { useReplayStore } from "../store/replayStore"
 import type { WSMessage, Candle } from "../types/market"
 import type { UTCTimestamp } from "lightweight-charts"
@@ -10,6 +10,7 @@ type Params = {
   timeScale: number
   gapScale: number
   playing: boolean
+  enabled: boolean // NEW: only connect if enabled
 }
 
 export function useReplaySocket(params: Params) {
@@ -20,21 +21,47 @@ export function useReplaySocket(params: Params) {
 
   const wsRef = useRef<WebSocket | null>(null)
   const startedRef = useRef(false)
+  const [isConnected, setIsConnected] = useState(false)
 
   /* ======================
-     OPEN / REOPEN SOCKET
-     (REPLAY LIFECYCLE)
+     CLOSE SOCKET FUNCTION
   ====================== */
-  useEffect(() => {
-    if (!params.symbol) return
-
-    console.log("[WS] Opening replay socket")
-
-    // HARD RESET
+  const closeSocket = useCallback(() => {
+    if (wsRef.current) {
+      console.log("[WS] Manually closing socket")
+      wsRef.current.close()
+      wsRef.current = null
+    }
     reset()
     startedRef.current = false
+    setIsConnected(false)
+  }, [reset])
 
-    wsRef.current?.close()
+  /* ======================
+     OPEN SOCKET (RE-CONNECT ON SYMBOL/DATE CHANGE)
+  ====================== */
+  useEffect(() => {
+    if (!params.symbol || !params.enabled) {
+      // If disabled, close any existing connection
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
+        setIsConnected(false)
+      }
+      return
+    }
+
+    console.log("[WS] Opening replay socket for", params.symbol)
+
+    // Close existing connection if any
+    if (wsRef.current) {
+      wsRef.current.close()
+      wsRef.current = null
+    }
+
+    reset()
+    startedRef.current = false
+    setIsConnected(false)
 
     const ws = new WebSocket(
       "ws://127.0.0.1:8000/ws/replay" +
@@ -48,20 +75,22 @@ export function useReplaySocket(params: Params) {
 
     wsRef.current = ws
 
+    ws.onopen = () => {
+      console.log("[WS] Connected")
+      setIsConnected(true)
+    }
+
     ws.onmessage = (event) => {
       const msg: WSMessage = JSON.parse(event.data)
 
-      /* ===== SESSION GAP ===== */
       if (msg.event === "session_gap" && msg.to) {
         const t = Math.floor(
           new Date(msg.to + "Z").getTime() / 1000
         ) as UTCTimestamp
-
         addSessionMarker(t)
         return
       }
 
-      /* ===== REAL CANDLE ===== */
       if (msg.event !== "tick" || !msg.real_candle || !msg.timestamp) return
 
       const time = Math.floor(
@@ -88,23 +117,22 @@ export function useReplaySocket(params: Params) {
     ws.onclose = () => {
       console.log("[WS] closed")
       wsRef.current = null
+      setIsConnected(false)
+    }
+
+    ws.onerror = () => {
+      console.log("[WS] error")
+      setIsConnected(false)
     }
 
     return () => {
       console.log("[WS] cleanup")
       ws.close()
     }
-  }, [
-    params.symbol,
-    params.start,
-    params.end,
-    params.timeScale,
-    params.gapScale,
-  ])
+  }, [params.symbol, params.start, params.end, params.timeScale, params.gapScale, params.enabled, reset, setInitialCandles, addCandle, addSessionMarker])
 
   /* ======================
-     PLAY / PAUSE ONLY
-     (NO RECONNECT)
+     PLAY / PAUSE COMMANDS
   ====================== */
   useEffect(() => {
     const ws = wsRef.current
@@ -116,4 +144,6 @@ export function useReplaySocket(params: Params) {
       })
     )
   }, [params.playing])
+
+  return { closeSocket, isConnected }
 }
