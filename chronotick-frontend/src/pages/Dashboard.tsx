@@ -230,6 +230,17 @@ type Position = {
   exitTimestamp?: number
 }
 
+type Order = {
+  id: string
+  symbol: string
+  side: 'BUY' | 'SELL'
+  quantity: number
+  orderType: 'MARKET' | 'LIMIT'
+  limitPrice?: number
+  timestamp: number
+  status: 'PENDING' | 'FILLED' | 'CANCELLED'
+}
+
 export default function Dashboard() {
   const [symbols, setSymbols] = useState<string[]>([])
   const [symbol, setSymbol] = useState("")
@@ -252,6 +263,8 @@ export default function Dashboard() {
   const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET')
   const [limitPrice, setLimitPrice] = useState<string>('')
   const [positions, setPositions] = useState<Position[]>([])
+  const [orders, setOrders] = useState<Order[]>([])
+  const [activeTab, setActiveTab] = useState<'positions' | 'orders'>('positions')
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -298,30 +311,90 @@ export default function Dashboard() {
     return sum + (priceDiff * pos.quantity)
   }, 0)
 
+  const pendingOrders = orders.filter(o => o.status === 'PENDING')
+
   // Execute Trade
   const executeTrade = (side: 'BUY' | 'SELL') => {
     if (orderQuantity <= 0 || currentPrice === 0) return
 
-    const price = orderType === 'MARKET' ? currentPrice : parseFloat(limitPrice)
-    
-    if (orderType === 'LIMIT' && (!limitPrice || isNaN(price))) {
-      alert('Please enter a valid limit price')
-      return
-    }
+    if (orderType === 'LIMIT') {
+      const price = parseFloat(limitPrice)
+      
+      if (!limitPrice || isNaN(price) || price <= 0) {
+        alert('Please enter a valid limit price')
+        return
+      }
 
-    const newPosition: Position = {
-      id: `${Date.now()}-${Math.random()}`,
-      symbol,
-      side,
-      quantity: orderQuantity,
-      entryPrice: price,
-      currentPrice: price,
-      timestamp: Date.now(),
-      status: 'OPEN'
-    }
+      // Real trading platform rules:
+      // - Buy limit: must be at or below market price (you want to buy cheaper)
+      // - Sell limit: must be at or above market price (you want to sell higher)
+      // If set "wrong", they execute immediately like market orders
+      
+      const shouldExecuteImmediately = 
+        (side === 'BUY' && price >= currentPrice) || 
+        (side === 'SELL' && price <= currentPrice)
 
-    setPositions(prev => [...prev, newPosition])
-    setShowTradePanel(false)
+      if (shouldExecuteImmediately) {
+        // Execute immediately as a market order would
+        const newPosition: Position = {
+          id: `${Date.now()}-${Math.random()}`,
+          symbol,
+          side,
+          quantity: orderQuantity,
+          entryPrice: currentPrice, // Fill at market price, not limit price
+          currentPrice: currentPrice,
+          timestamp: Date.now(),
+          status: 'OPEN'
+        }
+
+        setPositions(prev => [...prev, newPosition])
+        
+        // Also create a filled order record
+        const filledOrder: Order = {
+          id: `${Date.now()}-${Math.random()}`,
+          symbol,
+          side,
+          quantity: orderQuantity,
+          orderType: 'LIMIT',
+          limitPrice: price,
+          timestamp: Date.now(),
+          status: 'FILLED'
+        }
+        setOrders(prev => [...prev, filledOrder])
+      } else {
+        // Create pending limit order (waits for price to reach limit)
+        const newOrder: Order = {
+          id: `${Date.now()}-${Math.random()}`,
+          symbol,
+          side,
+          quantity: orderQuantity,
+          orderType: 'LIMIT',
+          limitPrice: price,
+          timestamp: Date.now(),
+          status: 'PENDING'
+        }
+
+        setOrders(prev => [...prev, newOrder])
+      }
+      
+      setShowTradePanel(false)
+      
+    } else {
+      // Market order - execute immediately
+      const newPosition: Position = {
+        id: `${Date.now()}-${Math.random()}`,
+        symbol,
+        side,
+        quantity: orderQuantity,
+        entryPrice: currentPrice,
+        currentPrice: currentPrice,
+        timestamp: Date.now(),
+        status: 'OPEN'
+      }
+
+      setPositions(prev => [...prev, newPosition])
+      setShowTradePanel(false)
+    }
   }
 
   // Close Position
@@ -339,15 +412,63 @@ export default function Dashboard() {
     }))
   }
 
-  // Update current prices for open positions
+  // Cancel Order
+  const cancelOrder = (orderId: string) => {
+    setOrders(prev => prev.map(order => {
+      if (order.id === orderId && order.status === 'PENDING') {
+        return { ...order, status: 'CANCELLED' as const }
+      }
+      return order
+    }))
+  }
+
+  // Check and execute limit orders when price changes
   useEffect(() => {
     if (currentPrice === 0) return
     
+    // Update current prices for open positions
     setPositions(prev => prev.map(pos => {
       if (pos.status === 'OPEN') {
         return { ...pos, currentPrice }
       }
       return pos
+    }))
+
+    // Check pending limit orders
+    setOrders(prev => prev.map(order => {
+      if (order.status !== 'PENDING' || !order.limitPrice) return order
+
+      let shouldExecute = false
+
+      // Check if limit order should be executed
+      if (order.side === 'BUY') {
+        // Buy limit executes when market price falls to or below limit price
+        shouldExecute = currentPrice <= order.limitPrice
+      } else {
+        // Sell limit executes when market price rises to or above limit price
+        shouldExecute = currentPrice >= order.limitPrice
+      }
+
+      if (shouldExecute) {
+        // Execute the order by creating a position
+        const newPosition: Position = {
+          id: `${Date.now()}-${Math.random()}`,
+          symbol: order.symbol,
+          side: order.side,
+          quantity: order.quantity,
+          entryPrice: order.limitPrice,
+          currentPrice: currentPrice,
+          timestamp: Date.now(),
+          status: 'OPEN'
+        }
+
+        setPositions(prev => [...prev, newPosition])
+
+        // Mark order as filled
+        return { ...order, status: 'FILLED' as const }
+      }
+
+      return order
     }))
   }, [currentPrice])
 
@@ -791,6 +912,26 @@ export default function Dashboard() {
               </div>
             )}
 
+            {/* Pending Orders Badge */}
+            {pendingOrders.length > 0 && (
+              <div style={{
+                padding: "6px 12px",
+                background: 'rgba(33, 150, 243, 0.1)',
+                border: '1px solid #2196F3',
+                borderRadius: "4px"
+              }}>
+                <span style={{ fontSize: "10px", color: "#6B7280", marginRight: "8px" }}>ORDERS</span>
+                <span style={{ 
+                  fontSize: "13px", 
+                  fontWeight: 700,
+                  color: '#2196F3',
+                  fontFamily: "'Roboto Mono', monospace"
+                }}>
+                  {pendingOrders.length}
+                </span>
+              </div>
+            )}
+
             {/* Trade Button */}
             <button
               onClick={() => setShowTradePanel(!showTradePanel)}
@@ -947,7 +1088,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Right Panel - Market Data & Positions */}
+        {/* Right Panel - Market Data & Positions/Orders */}
         <div style={{ 
           width: "320px", 
           background: "#0A0A0A",
@@ -1064,179 +1205,345 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Positions */}
-          <div style={{ flex: 1, padding: "16px" }}>
+          {/* Positions/Orders Tabs */}
+          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+            {/* Tab Headers */}
             <div style={{ 
-              fontSize: "10px", 
-              fontWeight: 700, 
-              color: "#6B7280", 
-              marginBottom: "12px", 
-              letterSpacing: "0.5px",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center"
+              display: "flex", 
+              borderBottom: "1px solid #1A1A1A",
+              background: "#000000"
             }}>
-              <span>POSITIONS</span>
-              {openPositions.length > 0 && (
-                <span style={{ 
-                  background: "#FF9800", 
-                  color: "#000000", 
-                  padding: "2px 6px", 
-                  borderRadius: "2px",
-                  fontSize: "9px",
-                  fontWeight: 700
-                }}>
-                  {openPositions.length}
-                </span>
-              )}
+              <button
+                onClick={() => setActiveTab('positions')}
+                style={{
+                  flex: 1,
+                  padding: "12px",
+                  background: activeTab === 'positions' ? '#0A0A0A' : 'transparent',
+                  border: "none",
+                  borderBottom: activeTab === 'positions' ? '2px solid #2196F3' : '2px solid transparent',
+                  color: activeTab === 'positions' ? '#FFFFFF' : '#6B7280',
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  letterSpacing: "0.5px",
+                  cursor: "pointer",
+                  transition: "all 0.15s"
+                }}
+              >
+                POSITIONS {openPositions.length > 0 && `(${openPositions.length})`}
+              </button>
+              <button
+                onClick={() => setActiveTab('orders')}
+                style={{
+                  flex: 1,
+                  padding: "12px",
+                  background: activeTab === 'orders' ? '#0A0A0A' : 'transparent',
+                  border: "none",
+                  borderBottom: activeTab === 'orders' ? '2px solid #2196F3' : '2px solid transparent',
+                  color: activeTab === 'orders' ? '#FFFFFF' : '#6B7280',
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  letterSpacing: "0.5px",
+                  cursor: "pointer",
+                  transition: "all 0.15s"
+                }}
+              >
+                ORDERS {pendingOrders.length > 0 && `(${pendingOrders.length})`}
+              </button>
             </div>
 
-            {openPositions.length > 0 ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                {openPositions.map((pos) => {
-                  const pnl = pos.side === 'BUY' 
-                    ? (currentPrice - pos.entryPrice) * pos.quantity
-                    : (pos.entryPrice - currentPrice) * pos.quantity
-                  const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100 * (pos.side === 'BUY' ? 1 : -1)
-                  
-                  return (
-                    <div
-                      key={pos.id}
-                      style={{
-                        padding: "10px",
-                        background: pnl >= 0 ? "rgba(0, 200, 83, 0.08)" : "rgba(255, 23, 68, 0.08)",
-                        border: `1px solid ${pnl >= 0 ? "rgba(0, 200, 83, 0.2)" : "rgba(255, 23, 68, 0.2)"}`,
-                        borderRadius: "4px",
-                        transition: "all 0.2s"
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = pnl >= 0 ? "rgba(0, 200, 83, 0.12)" : "rgba(255, 23, 68, 0.12)"
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = pnl >= 0 ? "rgba(0, 200, 83, 0.08)" : "rgba(255, 23, 68, 0.08)"
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <span style={{
-                            padding: "2px 6px",
-                            background: pos.side === 'BUY' ? 'rgba(0, 200, 83, 0.2)' : 'rgba(255, 23, 68, 0.2)',
-                            color: pos.side === 'BUY' ? '#00C853' : '#FF1744',
-                            borderRadius: "2px",
-                            fontSize: "9px",
-                            fontWeight: 700
-                          }}>
-                            {pos.side}
-                          </span>
-                          <span style={{ fontSize: "12px", fontWeight: 600, color: "#FFFFFF" }}>
-                            x{pos.quantity}
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => closePosition(pos.id)}
-                          style={{
-                            padding: "2px 8px",
-                            background: "none",
-                            border: "1px solid #2A2A2A",
-                            borderRadius: "2px",
-                            color: "#6B7280",
-                            fontSize: "9px",
-                            fontWeight: 700,
-                            cursor: "pointer",
-                            transition: "all 0.15s"
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.borderColor = "#4A4A4A"
-                            e.currentTarget.style.color = "#A0A0A0"
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.borderColor = "#2A2A2A"
-                            e.currentTarget.style.color = "#6B7280"
-                          }}
-                        >
-                          CLOSE
-                        </button>
+            {/* Tab Content */}
+            <div style={{ flex: 1, padding: "16px", overflowY: "auto" }}>
+              {activeTab === 'positions' ? (
+                <>
+                  {openPositions.length > 0 ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {openPositions.map((pos) => {
+                        const pnl = pos.side === 'BUY' 
+                          ? (currentPrice - pos.entryPrice) * pos.quantity
+                          : (pos.entryPrice - currentPrice) * pos.quantity
+                        const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100 * (pos.side === 'BUY' ? 1 : -1)
+                        
+                        return (
+                          <div
+                            key={pos.id}
+                            style={{
+                              padding: "10px",
+                              background: pnl >= 0 ? "rgba(0, 200, 83, 0.08)" : "rgba(255, 23, 68, 0.08)",
+                              border: `1px solid ${pnl >= 0 ? "rgba(0, 200, 83, 0.2)" : "rgba(255, 23, 68, 0.2)"}`,
+                              borderRadius: "4px",
+                              transition: "all 0.2s"
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = pnl >= 0 ? "rgba(0, 200, 83, 0.12)" : "rgba(255, 23, 68, 0.12)"
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = pnl >= 0 ? "rgba(0, 200, 83, 0.08)" : "rgba(255, 23, 68, 0.08)"
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <span style={{
+                                  padding: "2px 6px",
+                                  background: pos.side === 'BUY' ? 'rgba(0, 200, 83, 0.2)' : 'rgba(255, 23, 68, 0.2)',
+                                  color: pos.side === 'BUY' ? '#00C853' : '#FF1744',
+                                  borderRadius: "2px",
+                                  fontSize: "9px",
+                                  fontWeight: 700
+                                }}>
+                                  {pos.side}
+                                </span>
+                                <span style={{ fontSize: "12px", fontWeight: 600, color: "#FFFFFF" }}>
+                                  x{pos.quantity}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => closePosition(pos.id)}
+                                style={{
+                                  padding: "2px 8px",
+                                  background: "none",
+                                  border: "1px solid #2A2A2A",
+                                  borderRadius: "2px",
+                                  color: "#6B7280",
+                                  fontSize: "9px",
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                  transition: "all 0.15s"
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.borderColor = "#4A4A4A"
+                                  e.currentTarget.style.color = "#A0A0A0"
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.borderColor = "#2A2A2A"
+                                  e.currentTarget.style.color = "#6B7280"
+                                }}
+                              >
+                                CLOSE
+                              </button>
+                            </div>
+                            
+                            <div style={{ 
+                              display: "grid", 
+                              gridTemplateColumns: "1fr 1fr", 
+                              gap: "8px",
+                              fontSize: "10px"
+                            }}>
+                              <div>
+                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Entry</div>
+                                <div style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace", fontWeight: 500 }}>
+                                  {pos.entryPrice.toFixed(2)}
+                                </div>
+                              </div>
+                              <div>
+                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Current</div>
+                                <div style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace", fontWeight: 500 }}>
+                                  {currentPrice.toFixed(2)}
+                                </div>
+                              </div>
+                              <div>
+                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>P&L</div>
+                                <div style={{ 
+                                  color: pnl >= 0 ? '#00C853' : '#FF1744', 
+                                  fontFamily: "'Roboto Mono', monospace",
+                                  fontWeight: 600
+                                }}>
+                                  {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
+                                </div>
+                              </div>
+                              <div>
+                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Return</div>
+                                <div style={{ 
+                                  color: pnlPercent >= 0 ? '#00C853' : '#FF1744', 
+                                  fontFamily: "'Roboto Mono', monospace",
+                                  fontWeight: 600
+                                }}>
+                                  {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{
+                      textAlign: "center",
+                      padding: "40px 20px",
+                      color: "#4A4A4A",
+                      fontSize: "11px"
+                    }}>
+                      No open positions
+                    </div>
+                  )}
+
+                  {/* Closed Positions Summary */}
+                  {closedPositions.length > 0 && (
+                    <div style={{ 
+                      marginTop: "16px", 
+                      padding: "10px", 
+                      background: "rgba(26, 26, 26, 0.5)", 
+                      border: "1px solid #1A1A1A", 
+                      borderRadius: "4px" 
+                    }}>
+                      <div style={{ fontSize: "10px", color: "#4A4A4A", marginBottom: "6px" }}>
+                        REALIZED P&L
                       </div>
-                      
                       <div style={{ 
-                        display: "grid", 
-                        gridTemplateColumns: "1fr 1fr", 
-                        gap: "8px",
-                        fontSize: "10px"
+                        fontSize: "16px", 
+                        fontWeight: 700,
+                        color: realizedPnL >= 0 ? '#00C853' : '#FF1744',
+                        fontFamily: "'Roboto Mono', monospace"
                       }}>
-                        <div>
-                          <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Entry</div>
-                          <div style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace", fontWeight: 500 }}>
-                            {pos.entryPrice.toFixed(2)}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Current</div>
-                          <div style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace", fontWeight: 500 }}>
-                            {currentPrice.toFixed(2)}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>P&L</div>
-                          <div style={{ 
-                            color: pnl >= 0 ? '#00C853' : '#FF1744', 
-                            fontFamily: "'Roboto Mono', monospace",
-                            fontWeight: 600
-                          }}>
-                            {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Return</div>
-                          <div style={{ 
-                            color: pnlPercent >= 0 ? '#00C853' : '#FF1744', 
-                            fontFamily: "'Roboto Mono', monospace",
-                            fontWeight: 600
-                          }}>
-                            {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%
-                          </div>
-                        </div>
+                        {realizedPnL >= 0 ? '+' : ''}{realizedPnL.toFixed(2)}
+                      </div>
+                      <div style={{ fontSize: "10px", color: "#6B7280", marginTop: "4px" }}>
+                        {closedPositions.length} closed trade{closedPositions.length > 1 ? 's' : ''}
                       </div>
                     </div>
-                  )
-                })}
-              </div>
-            ) : (
-              <div style={{
-                textAlign: "center",
-                padding: "40px 20px",
-                color: "#4A4A4A",
-                fontSize: "11px"
-              }}>
-                No open positions
-              </div>
-            )}
+                  )}
+                </>
+              ) : (
+                <>
+                  {pendingOrders.length > 0 ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {pendingOrders.map((order) => {
+                        return (
+                          <div
+                            key={order.id}
+                            style={{
+                              padding: "10px",
+                              background: "rgba(33, 150, 243, 0.08)",
+                              border: "1px solid rgba(33, 150, 243, 0.2)",
+                              borderRadius: "4px",
+                              transition: "all 0.2s"
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = "rgba(33, 150, 243, 0.12)"
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = "rgba(33, 150, 243, 0.08)"
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <span style={{
+                                  padding: "2px 6px",
+                                  background: order.side === 'BUY' ? 'rgba(0, 200, 83, 0.2)' : 'rgba(255, 23, 68, 0.2)',
+                                  color: order.side === 'BUY' ? '#00C853' : '#FF1744',
+                                  borderRadius: "2px",
+                                  fontSize: "9px",
+                                  fontWeight: 700
+                                }}>
+                                  {order.side}
+                                </span>
+                                <span style={{
+                                  padding: "2px 6px",
+                                  background: 'rgba(33, 150, 243, 0.2)',
+                                  color: '#2196F3',
+                                  borderRadius: "2px",
+                                  fontSize: "9px",
+                                  fontWeight: 700
+                                }}>
+                                  {order.orderType}
+                                </span>
+                                <span style={{ fontSize: "12px", fontWeight: 600, color: "#FFFFFF" }}>
+                                  x{order.quantity}
+                                </span>
+                              </div>
+                              <button
+                                onClick={() => cancelOrder(order.id)}
+                                style={{
+                                  padding: "2px 8px",
+                                  background: "none",
+                                  border: "1px solid #2A2A2A",
+                                  borderRadius: "2px",
+                                  color: "#6B7280",
+                                  fontSize: "9px",
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                  transition: "all 0.15s"
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.borderColor = "#FF1744"
+                                  e.currentTarget.style.color = "#FF1744"
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.borderColor = "#2A2A2A"
+                                  e.currentTarget.style.color = "#6B7280"
+                                }}
+                              >
+                                CANCEL
+                              </button>
+                            </div>
+                            
+                            <div style={{ 
+                              display: "grid", 
+                              gridTemplateColumns: "1fr 1fr", 
+                              gap: "8px",
+                              fontSize: "10px"
+                            }}>
+                              <div>
+                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Limit Price</div>
+                                <div style={{ color: "#2196F3", fontFamily: "'Roboto Mono', monospace", fontWeight: 600 }}>
+                                  {order.limitPrice?.toFixed(2)}
+                                </div>
+                              </div>
+                              <div>
+                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Market Price</div>
+                                <div style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace", fontWeight: 500 }}>
+                                  {currentPrice.toFixed(2)}
+                                </div>
+                              </div>
+                              <div style={{ gridColumn: "1 / -1" }}>
+                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Distance</div>
+                                <div style={{ 
+                                  color: "#6B7280", 
+                                  fontFamily: "'Roboto Mono', monospace",
+                                  fontWeight: 500
+                                }}>
+                                  {order.limitPrice ? (
+                                    <>
+                                      {Math.abs(currentPrice - order.limitPrice).toFixed(2)} ({Math.abs(((currentPrice - order.limitPrice) / order.limitPrice) * 100).toFixed(2)}%)
+                                    </>
+                                  ) : '-'}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{
+                      textAlign: "center",
+                      padding: "40px 20px",
+                      color: "#4A4A4A",
+                      fontSize: "11px"
+                    }}>
+                      No pending orders
+                    </div>
+                  )}
 
-            {/* Closed Positions Summary */}
-            {closedPositions.length > 0 && (
-              <div style={{ 
-                marginTop: "16px", 
-                padding: "10px", 
-                background: "rgba(26, 26, 26, 0.5)", 
-                border: "1px solid #1A1A1A", 
-                borderRadius: "4px" 
-              }}>
-                <div style={{ fontSize: "10px", color: "#4A4A4A", marginBottom: "6px" }}>
-                  REALIZED P&L
-                </div>
-                <div style={{ 
-                  fontSize: "16px", 
-                  fontWeight: 700,
-                  color: realizedPnL >= 0 ? '#00C853' : '#FF1744',
-                  fontFamily: "'Roboto Mono', monospace"
-                }}>
-                  {realizedPnL >= 0 ? '+' : ''}{realizedPnL.toFixed(2)}
-                </div>
-                <div style={{ fontSize: "10px", color: "#6B7280", marginTop: "4px" }}>
-                  {closedPositions.length} closed trade{closedPositions.length > 1 ? 's' : ''}
-                </div>
-              </div>
-            )}
+                  {/* Filled/Cancelled Orders Summary */}
+                  {orders.filter(o => o.status !== 'PENDING').length > 0 && (
+                    <div style={{ 
+                      marginTop: "16px", 
+                      padding: "10px", 
+                      background: "rgba(26, 26, 26, 0.5)", 
+                      border: "1px solid #1A1A1A", 
+                      borderRadius: "4px" 
+                    }}>
+                      <div style={{ fontSize: "10px", color: "#4A4A4A", marginBottom: "6px" }}>
+                        ORDER HISTORY
+                      </div>
+                      <div style={{ fontSize: "11px", color: "#6B7280" }}>
+                        {orders.filter(o => o.status === 'FILLED').length} filled, {orders.filter(o => o.status === 'CANCELLED').length} cancelled
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
