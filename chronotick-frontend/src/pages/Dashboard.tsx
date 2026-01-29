@@ -244,6 +244,7 @@ type Order = {
 export default function Dashboard() {
   const [symbols, setSymbols] = useState<string[]>([])
   const [symbol, setSymbol] = useState("")
+  const [searchQuery, setSearchQuery] = useState("")
   const [start, setStart] = useState("2015-01-09T09:15")
   const [end, setEnd] = useState("2015-01-14T15:30")
   const [timeScale, setTimeScale] = useState(6000)
@@ -265,6 +266,7 @@ export default function Dashboard() {
   const [positions, setPositions] = useState<Position[]>([])
   const [orders, setOrders] = useState<Order[]>([])
   const [activeTab, setActiveTab] = useState<'positions' | 'orders'>('positions')
+  const [lastSymbolRefresh, setLastSymbolRefresh] = useState<Date>(new Date())
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -277,6 +279,11 @@ export default function Dashboard() {
   const reset = useReplayStore((s) => s.reset)
 
   const currentPrice = candles.length > 0 ? candles[candles.length - 1].close : 0
+
+  // Filter symbols based on search
+  const filteredSymbols = symbols.filter(s => 
+    s.toLowerCase().includes(searchQuery.toLowerCase())
+  )
 
   // Calculate timeframe statistics
   const stats = candles.length > 0 ? {
@@ -312,6 +319,23 @@ export default function Dashboard() {
   }, 0)
 
   const pendingOrders = orders.filter(o => o.status === 'PENDING')
+
+  // Fetch symbols
+  const fetchSymbols = async () => {
+    try {
+      const response = await fetch("http://127.0.0.1:8000/symbols")
+      const data = await response.json()
+      if (data.symbols?.length) {
+        setSymbols(data.symbols)
+        if (!symbol) {
+          setSymbol(data.symbols[0])
+        }
+      }
+      setLastSymbolRefresh(new Date())
+    } catch (error) {
+      console.error("Failed to fetch symbols:", error)
+    }
+  }
 
   // Execute Trade
   const executeTrade = (side: 'BUY' | 'SELL') => {
@@ -520,16 +544,16 @@ export default function Dashboard() {
     bearishCandles: candles.filter(c => c.close < c.open).length,
   } : null
 
-  /* ===== SYMBOLS ===== */
+  /* ===== SYMBOLS - Initial & Auto-refresh ===== */
   useEffect(() => {
-    fetch("http://127.0.0.1:8000/symbols")
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.symbols?.length) {
-          setSymbols(d.symbols)
-          setSymbol(d.symbols[0])
-        }
-      })
+    fetchSymbols()
+
+    // Auto-refresh every 10 minutes
+    const intervalId = setInterval(() => {
+      fetchSymbols()
+    }, 10 * 60 * 1000)
+
+    return () => clearInterval(intervalId)
   }, [])
 
   /* ===== AUTO-RESET ON PARAMETER CHANGE ===== */
@@ -785,23 +809,22 @@ export default function Dashboard() {
   return (
     <div style={{ 
       height: "100vh", 
-      display: "flex", 
-      flexDirection: "column",
+      display: "flex",
       background: "#000000",
       color: "#E5E7EB",
       overflow: "hidden",
-      fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif"
+      fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif"
     }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
         
         * {
           box-sizing: border-box;
         }
         
         ::-webkit-scrollbar {
-          width: 6px;
-          height: 6px;
+          width: 8px;
+          height: 8px;
         }
         
         ::-webkit-scrollbar-track {
@@ -810,7 +833,7 @@ export default function Dashboard() {
         
         ::-webkit-scrollbar-thumb {
           background: #2A2A2A;
-          border-radius: 3px;
+          border-radius: 4px;
         }
         
         ::-webkit-scrollbar-thumb:hover {
@@ -823,726 +846,937 @@ export default function Dashboard() {
         a[href*="tradingview"] {
           display: none !important;
         }
+
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateX(-10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+
+        .symbol-item {
+          animation: slideIn 0.2s ease-out;
+        }
       `}</style>
 
-      {/* Top Bar */}
-      <div style={{ 
+      {/* Left Sidebar - Symbols */}
+      <div style={{
+        width: "280px",
         background: "#0A0A0A",
-        borderBottom: "1px solid #1A1A1A"
+        borderRight: "1px solid #1A1A1A",
+        display: "flex",
+        flexDirection: "column"
       }}>
-        {/* Main Header */}
-        <div style={{ 
-          padding: "12px 24px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
+        {/* Sidebar Header */}
+        <div style={{
+          padding: "20px",
           borderBottom: "1px solid #1A1A1A"
         }}>
-          {/* Left: Symbol and Price */}
-          <div style={{ display: "flex", alignItems: "center", gap: "32px" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
-              <span style={{ 
-                fontSize: "18px", 
-                fontWeight: 700, 
-                color: "#FFFFFF",
-                fontFamily: "'Roboto Mono', monospace"
-              }}>
-                {symbol || 'SELECT'}
-              </span>
-              {stats && (
-                <>
-                  <span style={{ 
-                    fontSize: "24px", 
-                    fontWeight: 600, 
-                    color: "#FFFFFF",
-                    fontFamily: "'Roboto Mono', monospace"
-                  }}>
-                    {stats.close.toFixed(2)}
-                  </span>
-                  <span style={{ 
-                    fontSize: "14px", 
-                    fontWeight: 600,
-                    color: stats.priceChange >= 0 ? '#00C853' : '#FF1744',
-                    fontFamily: "'Roboto Mono', monospace"
-                  }}>
-                    {stats.priceChange >= 0 ? '▲' : '▼'} {Math.abs(stats.priceChange).toFixed(2)} ({priceChangePercent >= 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%)
-                  </span>
-                </>
-              )}
-            </div>
-
-            {/* Quick Stats */}
-            {stats && (
-              <div style={{ display: "flex", alignItems: "center", gap: "24px", fontSize: "11px", color: "#6B7280" }}>
-                <div>
-                  <span style={{ color: "#4A4A4A" }}>O</span> <span style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace" }}>{stats.open.toFixed(2)}</span>
-                </div>
-                <div>
-                  <span style={{ color: "#4A4A4A" }}>H</span> <span style={{ color: "#00C853", fontFamily: "'Roboto Mono', monospace" }}>{stats.high.toFixed(2)}</span>
-                </div>
-                <div>
-                  <span style={{ color: "#4A4A4A" }}>L</span> <span style={{ color: "#FF1744", fontFamily: "'Roboto Mono', monospace" }}>{stats.low.toFixed(2)}</span>
-                </div>
-                <div>
-                  <span style={{ color: "#4A4A4A" }}>VOL</span> <span style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace" }}>{(stats.volume / 1000000).toFixed(2)}M</span>
-                </div>
-              </div>
-            )}
+          <div style={{
+            fontSize: "11px",
+            fontWeight: 700,
+            color: "#6B7280",
+            letterSpacing: "1px",
+            marginBottom: "12px"
+          }}>
+            MARKET SYMBOLS
           </div>
 
-          {/* Right: Status and Actions */}
-          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            {/* P&L */}
-            {openPositions.length > 0 && (
-              <div style={{
-                padding: "6px 12px",
-                background: totalPnL >= 0 ? 'rgba(0, 200, 83, 0.1)' : 'rgba(255, 23, 68, 0.1)',
-                border: `1px solid ${totalPnL >= 0 ? '#00C853' : '#FF1744'}`,
-                borderRadius: "4px"
-              }}>
-                <span style={{ fontSize: "10px", color: "#6B7280", marginRight: "8px" }}>P&L</span>
-                <span style={{ 
-                  fontSize: "13px", 
-                  fontWeight: 700,
-                  color: totalPnL >= 0 ? '#00C853' : '#FF1744',
-                  fontFamily: "'Roboto Mono', monospace"
-                }}>
-                  {totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(2)}
-                </span>
-              </div>
-            )}
-
-            {/* Pending Orders Badge */}
-            {pendingOrders.length > 0 && (
-              <div style={{
-                padding: "6px 12px",
-                background: 'rgba(33, 150, 243, 0.1)',
-                border: '1px solid #2196F3',
-                borderRadius: "4px"
-              }}>
-                <span style={{ fontSize: "10px", color: "#6B7280", marginRight: "8px" }}>ORDERS</span>
-                <span style={{ 
-                  fontSize: "13px", 
-                  fontWeight: 700,
-                  color: '#2196F3',
-                  fontFamily: "'Roboto Mono', monospace"
-                }}>
-                  {pendingOrders.length}
-                </span>
-              </div>
-            )}
-
-            {/* Trade Button */}
-            <button
-              onClick={() => setShowTradePanel(!showTradePanel)}
-              disabled={!isConnected || currentPrice === 0}
+          {/* Search Bar */}
+          <div style={{ position: "relative" }}>
+            <input
+              type="text"
+              placeholder="Search symbols..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               style={{
-                padding: "8px 20px",
-                background: isConnected && currentPrice > 0 ? "#2196F3" : "#1A1A1A",
-                border: "none",
-                borderRadius: "4px",
-                color: isConnected && currentPrice > 0 ? "#FFFFFF" : "#4A4A4A",
-                fontWeight: 700,
-                fontSize: "12px",
-                cursor: isConnected && currentPrice > 0 ? "pointer" : "not-allowed",
-                transition: "all 0.15s",
-                textTransform: "uppercase",
-                letterSpacing: "0.5px"
+                width: "100%",
+                padding: "10px 36px 10px 12px",
+                background: "#000000",
+                border: "1px solid #1A1A1A",
+                borderRadius: "6px",
+                color: "#E5E7EB",
+                fontSize: "13px",
+                outline: "none",
+                transition: "all 0.2s"
               }}
-              onMouseEnter={(e) => {
-                if (isConnected && currentPrice > 0) {
-                  e.currentTarget.style.background = "#42A5F5"
-                }
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = "#2196F3"
               }}
-              onMouseLeave={(e) => {
-                if (isConnected && currentPrice > 0) {
-                  e.currentTarget.style.background = "#2196F3"
-                }
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = "#1A1A1A"
               }}
-            >
-              Trade
-            </button>
+            />
+            <span style={{
+              position: "absolute",
+              right: "12px",
+              top: "50%",
+              transform: "translateY(-50%)",
+              color: "#4A4A4A",
+              fontSize: "14px"
+            }}>
+              🔍
+            </span>
+          </div>
 
-            {/* Connection Status */}
-            <div style={{
+          {/* Refresh Button */}
+          <button
+            onClick={fetchSymbols}
+            style={{
+              marginTop: "12px",
+              width: "100%",
+              padding: "8px",
+              background: "#1A1A1A",
+              border: "1px solid #2A2A2A",
+              borderRadius: "6px",
+              color: "#8B92A8",
+              fontSize: "11px",
+              fontWeight: 600,
+              cursor: "pointer",
               display: "flex",
               alignItems: "center",
+              justifyContent: "center",
               gap: "6px",
-              padding: "8px 12px",
-              background: "#0A0A0A",
-              border: "1px solid #1A1A1A",
-              borderRadius: "4px"
-            }}>
-              <div style={{
-                width: "6px",
-                height: "6px",
-                borderRadius: "50%",
-                background: isConnected ? "#00C853" : "#4A4A4A"
-              }} />
-              <span style={{ fontSize: "11px", color: "#6B7280", fontWeight: 600 }}>
-                {isConnected ? 'LIVE' : 'OFFLINE'}
-              </span>
-            </div>
+              transition: "all 0.2s"
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "#2A2A2A"
+              e.currentTarget.style.color = "#E5E7EB"
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "#1A1A1A"
+              e.currentTarget.style.color = "#8B92A8"
+            }}
+          >
+            <span style={{ fontSize: "14px" }}>↻</span>
+            REFRESH
+          </button>
+
+          {/* Last Update */}
+          <div style={{
+            marginTop: "8px",
+            fontSize: "10px",
+            color: "#4A4A4A",
+            textAlign: "center"
+          }}>
+            Updated: {lastSymbolRefresh.toLocaleTimeString()}
           </div>
         </div>
 
-        {/* Controls Bar */}
-        <TopBar
-          symbols={symbols}
-          symbol={symbol}
-          setSymbol={setSymbol}
-          start={start}
-          setStart={setStart}
-          end={end}
-          setEnd={setEnd}
-          timeScale={timeScale}
-          setTimeScale={setTimeScale}
-          gapScale={gapScale}
-          setGapScale={setGapScale}
-          playing={playing}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onReplay={!isConnected ? () => {
-            setSocketEnabled(false)
-            initializedRef.current = false
-            
-            if (seriesRef.current) {
-              seriesRef.current.setData([])
-            }
-            
-            Object.values(indicatorSeriesRef.current).forEach(series => {
-              series.setData([])
-            })
-            
-            reset()
-            setPlaying(true)
-            
-            setTimeout(() => {
-              setSocketEnabled(true)
-              
-              if (chartRef.current && containerRef.current) {
-                chartRef.current.resize(
-                  containerRef.current.clientWidth,
-                  containerRef.current.clientHeight
-                )
-              }
-            }, 100)
-          } : undefined}
-          isConnected={isConnected}
-        />
+        {/* Symbols List */}
+        <div style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "8px"
+        }}>
+          {filteredSymbols.length > 0 ? (
+            filteredSymbols.map((sym, index) => (
+              <div
+                key={sym}
+                className="symbol-item"
+                onClick={() => setSymbol(sym)}
+                style={{
+                  padding: "12px 16px",
+                  margin: "4px 0",
+                  background: symbol === sym ? "#1A1A1A" : "transparent",
+                  border: symbol === sym ? "1px solid #2196F3" : "1px solid transparent",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                  animationDelay: `${index * 0.02}s`
+                }}
+                onMouseEnter={(e) => {
+                  if (symbol !== sym) {
+                    e.currentTarget.style.background = "#0F0F0F"
+                    e.currentTarget.style.borderColor = "#2A2A2A"
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (symbol !== sym) {
+                    e.currentTarget.style.background = "transparent"
+                    e.currentTarget.style.borderColor = "transparent"
+                  }
+                }}
+              >
+                <div style={{
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  color: symbol === sym ? "#2196F3" : "#E5E7EB",
+                  fontFamily: "'JetBrains Mono', monospace"
+                }}>
+                  {sym}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div style={{
+              padding: "40px 20px",
+              textAlign: "center",
+              color: "#4A4A4A",
+              fontSize: "12px"
+            }}>
+              {searchQuery ? "No symbols match your search" : "Loading symbols..."}
+            </div>
+          )}
+        </div>
+
+        {/* Symbol Count */}
+        <div style={{
+          padding: "12px 20px",
+          borderTop: "1px solid #1A1A1A",
+          fontSize: "11px",
+          color: "#6B7280",
+          textAlign: "center"
+        }}>
+          {filteredSymbols.length} of {symbols.length} symbols
+        </div>
       </div>
 
-      {/* Main Content */}
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {/* Chart Area */}
-        <div style={{ flex: 1, position: "relative", background: "#000000" }}>
-          <div 
-            ref={containerRef} 
-            style={{ 
-              position: "absolute", 
-              inset: 0
-            }} 
-          />
-          
-          {!isConnected && candles.length === 0 && (
-            <div style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              pointerEvents: "none"
-            }}>
-              <div style={{ textAlign: "center", opacity: 0.3 }}>
-                <div style={{ fontSize: "14px", color: "#4A4A4A", fontWeight: 500 }}>
-                  Configure parameters and start replay
-                </div>
-              </div>
-            </div>
-          )}
-          
-          {!isConnected && candles.length > 0 && (
-            <div style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              pointerEvents: "none"
-            }}>
-              <div style={{ 
-                textAlign: "center",
-                background: "#0A0A0A",
-                padding: "24px 40px",
-                borderRadius: "8px",
-                border: "1px solid #1A1A1A"
-              }}>
-                <div style={{ fontSize: "18px", fontWeight: 600, color: "#FFFFFF", marginBottom: "8px" }}>
-                  Replay Complete
-                </div>
-                <div style={{ fontSize: "12px", color: "#6B7280" }}>
-                  Click "↻ Replay" to watch again
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Right Panel - Market Data & Positions/Orders */}
+      {/* Main Content Area */}
+      <div style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden"
+      }}>
+        {/* Top Section */}
         <div style={{ 
-          width: "320px", 
           background: "#0A0A0A",
-          borderLeft: "1px solid #1A1A1A",
-          display: "flex",
-          flexDirection: "column",
-          overflowY: "auto"
+          borderBottom: "1px solid #1A1A1A"
         }}>
-          {/* Technical Indicators */}
-          {metrics && (
-            <div style={{ padding: "16px", borderBottom: "1px solid #1A1A1A" }}>
-              <div style={{ fontSize: "10px", fontWeight: 700, color: "#6B7280", marginBottom: "12px", letterSpacing: "0.5px" }}>
-                TECHNICALS
+          {/* Main Header */}
+          <div style={{ 
+            padding: "16px 24px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            borderBottom: "1px solid #1A1A1A"
+          }}>
+            {/* Left: Symbol and Price */}
+            <div style={{ display: "flex", alignItems: "center", gap: "32px" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
+                <span style={{ 
+                  fontSize: "20px", 
+                  fontWeight: 700, 
+                  color: "#FFFFFF",
+                  fontFamily: "'JetBrains Mono', monospace"
+                }}>
+                  {symbol || 'SELECT'}
+                </span>
+                {stats && (
+                  <>
+                    <span style={{ 
+                      fontSize: "28px", 
+                      fontWeight: 700, 
+                      color: "#FFFFFF",
+                      fontFamily: "'JetBrains Mono', monospace"
+                    }}>
+                      {stats.close.toFixed(2)}
+                    </span>
+                    <span style={{ 
+                      fontSize: "16px", 
+                      fontWeight: 700,
+                      color: stats.priceChange >= 0 ? '#00C853' : '#FF1744',
+                      fontFamily: "'JetBrains Mono', monospace"
+                    }}>
+                      {stats.priceChange >= 0 ? '▲' : '▼'} {Math.abs(stats.priceChange).toFixed(2)} ({priceChangePercent >= 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%)
+                    </span>
+                  </>
+                )}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                <MetricCard 
-                  label="RSI" 
-                  value={metrics.rsi.toFixed(1)}
-                  color={metrics.rsi > 70 ? '#FF1744' : metrics.rsi < 30 ? '#00C853' : '#6B7280'}
-                />
-                <MetricCard 
-                  label="Stoch RSI" 
-                  value={metrics.stochRSI.toFixed(1)}
-                  color={metrics.stochRSI > 80 ? '#FF1744' : metrics.stochRSI < 20 ? '#00C853' : '#6B7280'}
-                />
-                <MetricCard 
-                  label="ADX" 
-                  value={metrics.adx.toFixed(1)}
-                  color={metrics.adx > 25 ? '#00C853' : '#6B7280'}
-                />
-                <MetricCard 
-                  label="ATR" 
-                  value={metrics.atr.toFixed(2)}
-                />
-                <MetricCard 
-                  label="Volatility" 
-                  value={`${metrics.volatility.toFixed(2)}%`}
-                />
-                <MetricCard 
-                  label="VWAP" 
-                  value={metrics.vwap.toFixed(2)}
-                />
-                <MetricCard 
-                  label="OBV" 
-                  value={`${(metrics.obv / 1000000).toFixed(2)}M`}
-                />
-                <MetricCard 
-                  label="BARS" 
-                  value={candles.length.toString()}
-                />
-              </div>
-            </div>
-          )}
 
-          {/* Sentiment */}
-          {metrics && (
-            <div style={{ padding: "16px", borderBottom: "1px solid #1A1A1A" }}>
-              <div style={{ fontSize: "10px", fontWeight: 700, color: "#6B7280", marginBottom: "12px", letterSpacing: "0.5px" }}>
-                SENTIMENT
-              </div>
-              <div style={{ display: "flex", height: "20px", borderRadius: "2px", overflow: "hidden", marginBottom: "8px" }}>
-                <div style={{ 
-                  width: `${(metrics.bullishCandles / (metrics.bullishCandles + metrics.bearishCandles)) * 100}%`,
-                  background: "#00C853"
-                }} />
-                <div style={{ 
-                  flex: 1,
-                  background: "#FF1744"
-                }} />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", fontFamily: "'Roboto Mono', monospace" }}>
-                <span style={{ color: "#00C853" }}>BULL {metrics.bullishCandles}</span>
-                <span style={{ color: "#FF1744" }}>BEAR {metrics.bearishCandles}</span>
-              </div>
+              {/* Quick Stats */}
+              {stats && (
+                <div style={{ display: "flex", alignItems: "center", gap: "24px", fontSize: "12px" }}>
+                  <div>
+                    <span style={{ color: "#6B7280" }}>OPEN</span>{' '}
+                    <span style={{ color: "#E5E7EB", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{stats.open.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: "#6B7280" }}>HIGH</span>{' '}
+                    <span style={{ color: "#00C853", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{stats.high.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: "#6B7280" }}>LOW</span>{' '}
+                    <span style={{ color: "#FF1744", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{stats.low.toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span style={{ color: "#6B7280" }}>VOL</span>{' '}
+                    <span style={{ color: "#E5E7EB", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>{(stats.volume / 1000000).toFixed(2)}M</span>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
 
-          {/* Indicators Toggle */}
-          <div style={{ padding: "16px", borderBottom: "1px solid #1A1A1A" }}>
-            <div style={{ fontSize: "10px", fontWeight: 700, color: "#6B7280", marginBottom: "12px", letterSpacing: "0.5px" }}>
-              OVERLAYS
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-              <IndicatorToggle
-                label="SMA 20"
-                color="#2196F3"
-                enabled={showIndicators.sma20}
-                onChange={(v) => setShowIndicators(prev => ({ ...prev, sma20: v }))}
-              />
-              <IndicatorToggle
-                label="SMA 50"
-                color="#FF9800"
-                enabled={showIndicators.sma50}
-                onChange={(v) => setShowIndicators(prev => ({ ...prev, sma50: v }))}
-              />
-              <IndicatorToggle
-                label="EMA 12"
-                color="#00E676"
-                enabled={showIndicators.ema12}
-                onChange={(v) => setShowIndicators(prev => ({ ...prev, ema12: v }))}
-              />
-              <IndicatorToggle
-                label="EMA 26"
-                color="#FFC107"
-                enabled={showIndicators.ema26}
-                onChange={(v) => setShowIndicators(prev => ({ ...prev, ema26: v }))}
-              />
-              <IndicatorToggle
-                label="Bollinger"
-                color="#9C27B0"
-                enabled={showIndicators.bollinger}
-                onChange={(v) => setShowIndicators(prev => ({ ...prev, bollinger: v }))}
-              />
+            {/* Right: Status and Actions */}
+            <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+              {/* P&L */}
+              {openPositions.length > 0 && (
+                <div style={{
+                  padding: "8px 16px",
+                  background: totalPnL >= 0 ? 'rgba(0, 200, 83, 0.15)' : 'rgba(255, 23, 68, 0.15)',
+                  border: `1px solid ${totalPnL >= 0 ? '#00C853' : '#FF1744'}`,
+                  borderRadius: "6px"
+                }}>
+                  <span style={{ fontSize: "10px", color: "#8B92A8", marginRight: "8px", fontWeight: 600 }}>P&L</span>
+                  <span style={{ 
+                    fontSize: "16px", 
+                    fontWeight: 700,
+                    color: totalPnL >= 0 ? '#00C853' : '#FF1744',
+                    fontFamily: "'JetBrains Mono', monospace"
+                  }}>
+                    {totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(2)}
+                  </span>
+                </div>
+              )}
+
+              {/* Pending Orders Badge */}
+              {pendingOrders.length > 0 && (
+                <div style={{
+                  padding: "8px 16px",
+                  background: 'rgba(33, 150, 243, 0.15)',
+                  border: '1px solid #2196F3',
+                  borderRadius: "6px"
+                }}>
+                  <span style={{ fontSize: "10px", color: "#8B92A8", marginRight: "8px", fontWeight: 600 }}>ORDERS</span>
+                  <span style={{ 
+                    fontSize: "16px", 
+                    fontWeight: 700,
+                    color: '#2196F3',
+                    fontFamily: "'JetBrains Mono', monospace"
+                  }}>
+                    {pendingOrders.length}
+                  </span>
+                </div>
+              )}
+
+              {/* Trade Button */}
+              <button
+                onClick={() => setShowTradePanel(!showTradePanel)}
+                disabled={!isConnected || currentPrice === 0}
+                style={{
+                  padding: "10px 24px",
+                  background: isConnected && currentPrice > 0 ? "#2196F3" : "#1A1A1A",
+                  border: "none",
+                  borderRadius: "6px",
+                  color: isConnected && currentPrice > 0 ? "#FFFFFF" : "#4A4A4A",
+                  fontWeight: 700,
+                  fontSize: "13px",
+                  cursor: isConnected && currentPrice > 0 ? "pointer" : "not-allowed",
+                  transition: "all 0.2s",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px"
+                }}
+                onMouseEnter={(e) => {
+                  if (isConnected && currentPrice > 0) {
+                    e.currentTarget.style.background = "#42A5F5"
+                    e.currentTarget.style.transform = "translateY(-1px)"
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (isConnected && currentPrice > 0) {
+                    e.currentTarget.style.background = "#2196F3"
+                    e.currentTarget.style.transform = "translateY(0)"
+                  }
+                }}
+              >
+                + New Trade
+              </button>
+
+              {/* Connection Status */}
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+                padding: "10px 16px",
+                background: "#0A0A0A",
+                border: "1px solid #1A1A1A",
+                borderRadius: "6px"
+              }}>
+                <div style={{
+                  width: "8px",
+                  height: "8px",
+                  borderRadius: "50%",
+                  background: isConnected ? "#00C853" : "#4A4A4A",
+                  boxShadow: isConnected ? "0 0 8px rgba(0, 200, 83, 0.5)" : "none"
+                }} />
+                <span style={{ fontSize: "12px", color: "#8B92A8", fontWeight: 600 }}>
+                  {isConnected ? 'LIVE' : 'OFFLINE'}
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Positions/Orders Tabs */}
-          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-            {/* Tab Headers */}
-            <div style={{ 
-              display: "flex", 
-              borderBottom: "1px solid #1A1A1A",
-              background: "#000000"
-            }}>
-              <button
-                onClick={() => setActiveTab('positions')}
-                style={{
-                  flex: 1,
-                  padding: "12px",
-                  background: activeTab === 'positions' ? '#0A0A0A' : 'transparent',
-                  border: "none",
-                  borderBottom: activeTab === 'positions' ? '2px solid #2196F3' : '2px solid transparent',
-                  color: activeTab === 'positions' ? '#FFFFFF' : '#6B7280',
-                  fontSize: "10px",
-                  fontWeight: 700,
-                  letterSpacing: "0.5px",
-                  cursor: "pointer",
-                  transition: "all 0.15s"
-                }}
-              >
-                POSITIONS {openPositions.length > 0 && `(${openPositions.length})`}
-              </button>
-              <button
-                onClick={() => setActiveTab('orders')}
-                style={{
-                  flex: 1,
-                  padding: "12px",
-                  background: activeTab === 'orders' ? '#0A0A0A' : 'transparent',
-                  border: "none",
-                  borderBottom: activeTab === 'orders' ? '2px solid #2196F3' : '2px solid transparent',
-                  color: activeTab === 'orders' ? '#FFFFFF' : '#6B7280',
-                  fontSize: "10px",
-                  fontWeight: 700,
-                  letterSpacing: "0.5px",
-                  cursor: "pointer",
-                  transition: "all 0.15s"
-                }}
-              >
-                ORDERS {pendingOrders.length > 0 && `(${pendingOrders.length})`}
-              </button>
+          {/* Controls Bar */}
+          <TopBar
+            symbols={symbols}
+            symbol={symbol}
+            setSymbol={setSymbol}
+            start={start}
+            setStart={setStart}
+            end={end}
+            setEnd={setEnd}
+            timeScale={timeScale}
+            setTimeScale={setTimeScale}
+            gapScale={gapScale}
+            setGapScale={setGapScale}
+            playing={playing}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onReplay={!isConnected ? () => {
+              setSocketEnabled(false)
+              initializedRef.current = false
+              
+              if (seriesRef.current) {
+                seriesRef.current.setData([])
+              }
+              
+              Object.values(indicatorSeriesRef.current).forEach(series => {
+                series.setData([])
+              })
+              
+              reset()
+              setPlaying(true)
+              
+              setTimeout(() => {
+                setSocketEnabled(true)
+                
+                if (chartRef.current && containerRef.current) {
+                  chartRef.current.resize(
+                    containerRef.current.clientWidth,
+                    containerRef.current.clientHeight
+                  )
+                }
+              }, 100)
+            } : undefined}
+            isConnected={isConnected}
+          />
+        </div>
+
+        {/* Main Content */}
+        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+          {/* Chart Area */}
+          <div style={{ flex: 1, position: "relative", background: "#000000" }}>
+            <div 
+              ref={containerRef} 
+              style={{ 
+                position: "absolute", 
+                inset: 0
+              }} 
+            />
+            
+            {!isConnected && candles.length === 0 && (
+              <div style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                pointerEvents: "none"
+              }}>
+                <div style={{ textAlign: "center", opacity: 0.3 }}>
+                  <div style={{ fontSize: "16px", color: "#4A4A4A", fontWeight: 500 }}>
+                    Configure parameters and start replay
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {!isConnected && candles.length > 0 && (
+              <div style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                pointerEvents: "none"
+              }}>
+                <div style={{ 
+                  textAlign: "center",
+                  background: "#0A0A0A",
+                  padding: "32px 48px",
+                  borderRadius: "12px",
+                  border: "1px solid #1A1A1A"
+                }}>
+                  <div style={{ fontSize: "20px", fontWeight: 700, color: "#FFFFFF", marginBottom: "8px" }}>
+                    Replay Complete
+                  </div>
+                  <div style={{ fontSize: "13px", color: "#8B92A8" }}>
+                    Click "↻ Replay" to watch again
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Right Panel - Analytics & Trading */}
+          <div style={{ 
+            width: "360px", 
+            background: "#0A0A0A",
+            borderLeft: "1px solid #1A1A1A",
+            display: "flex",
+            flexDirection: "column",
+            overflowY: "auto"
+          }}>
+            {/* Technical Indicators */}
+            {metrics && (
+              <div style={{ padding: "20px", borderBottom: "1px solid #1A1A1A" }}>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#6B7280", marginBottom: "16px", letterSpacing: "1px" }}>
+                  TECHNICAL INDICATORS
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                  <MetricCard 
+                    label="RSI" 
+                    value={metrics.rsi.toFixed(1)}
+                    color={metrics.rsi > 70 ? '#FF1744' : metrics.rsi < 30 ? '#00C853' : '#8B92A8'}
+                  />
+                  <MetricCard 
+                    label="Stoch RSI" 
+                    value={metrics.stochRSI.toFixed(1)}
+                    color={metrics.stochRSI > 80 ? '#FF1744' : metrics.stochRSI < 20 ? '#00C853' : '#8B92A8'}
+                  />
+                  <MetricCard 
+                    label="ADX" 
+                    value={metrics.adx.toFixed(1)}
+                    color={metrics.adx > 25 ? '#00C853' : '#8B92A8'}
+                  />
+                  <MetricCard 
+                    label="ATR" 
+                    value={metrics.atr.toFixed(2)}
+                  />
+                  <MetricCard 
+                    label="Volatility" 
+                    value={`${metrics.volatility.toFixed(2)}%`}
+                  />
+                  <MetricCard 
+                    label="VWAP" 
+                    value={metrics.vwap.toFixed(2)}
+                  />
+                  <MetricCard 
+                    label="OBV" 
+                    value={`${(metrics.obv / 1000000).toFixed(2)}M`}
+                  />
+                  <MetricCard 
+                    label="Candles" 
+                    value={candles.length.toString()}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Sentiment */}
+            {metrics && (
+              <div style={{ padding: "20px", borderBottom: "1px solid #1A1A1A" }}>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: "#6B7280", marginBottom: "16px", letterSpacing: "1px" }}>
+                  MARKET SENTIMENT
+                </div>
+                <div style={{ display: "flex", height: "24px", borderRadius: "4px", overflow: "hidden", marginBottom: "12px" }}>
+                  <div style={{ 
+                    width: `${(metrics.bullishCandles / (metrics.bullishCandles + metrics.bearishCandles)) * 100}%`,
+                    background: "linear-gradient(90deg, #00C853, #00E676)"
+                  }} />
+                  <div style={{ 
+                    flex: 1,
+                    background: "linear-gradient(90deg, #FF1744, #FF5252)"
+                  }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600 }}>
+                  <span style={{ color: "#00C853" }}>BULLISH {metrics.bullishCandles}</span>
+                  <span style={{ color: "#FF1744" }}>BEARISH {metrics.bearishCandles}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Chart Overlays */}
+            <div style={{ padding: "20px", borderBottom: "1px solid #1A1A1A" }}>
+              <div style={{ fontSize: "11px", fontWeight: 700, color: "#6B7280", marginBottom: "16px", letterSpacing: "1px" }}>
+                CHART OVERLAYS
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                <IndicatorToggle
+                  label="SMA 20"
+                  color="#2196F3"
+                  enabled={showIndicators.sma20}
+                  onChange={(v) => setShowIndicators(prev => ({ ...prev, sma20: v }))}
+                />
+                <IndicatorToggle
+                  label="SMA 50"
+                  color="#FF9800"
+                  enabled={showIndicators.sma50}
+                  onChange={(v) => setShowIndicators(prev => ({ ...prev, sma50: v }))}
+                />
+                <IndicatorToggle
+                  label="EMA 12"
+                  color="#00E676"
+                  enabled={showIndicators.ema12}
+                  onChange={(v) => setShowIndicators(prev => ({ ...prev, ema12: v }))}
+                />
+                <IndicatorToggle
+                  label="EMA 26"
+                  color="#FFC107"
+                  enabled={showIndicators.ema26}
+                  onChange={(v) => setShowIndicators(prev => ({ ...prev, ema26: v }))}
+                />
+                <IndicatorToggle
+                  label="Bollinger Bands"
+                  color="#9C27B0"
+                  enabled={showIndicators.bollinger}
+                  onChange={(v) => setShowIndicators(prev => ({ ...prev, bollinger: v }))}
+                />
+              </div>
             </div>
 
-            {/* Tab Content */}
-            <div style={{ flex: 1, padding: "16px", overflowY: "auto" }}>
-              {activeTab === 'positions' ? (
-                <>
-                  {openPositions.length > 0 ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                      {openPositions.map((pos) => {
-                        const pnl = pos.side === 'BUY' 
-                          ? (currentPrice - pos.entryPrice) * pos.quantity
-                          : (pos.entryPrice - currentPrice) * pos.quantity
-                        const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100 * (pos.side === 'BUY' ? 1 : -1)
-                        
-                        return (
-                          <div
-                            key={pos.id}
-                            style={{
-                              padding: "10px",
-                              background: pnl >= 0 ? "rgba(0, 200, 83, 0.08)" : "rgba(255, 23, 68, 0.08)",
-                              border: `1px solid ${pnl >= 0 ? "rgba(0, 200, 83, 0.2)" : "rgba(255, 23, 68, 0.2)"}`,
-                              borderRadius: "4px",
-                              transition: "all 0.2s"
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.background = pnl >= 0 ? "rgba(0, 200, 83, 0.12)" : "rgba(255, 23, 68, 0.12)"
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.background = pnl >= 0 ? "rgba(0, 200, 83, 0.08)" : "rgba(255, 23, 68, 0.08)"
-                            }}
-                          >
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                <span style={{
-                                  padding: "2px 6px",
-                                  background: pos.side === 'BUY' ? 'rgba(0, 200, 83, 0.2)' : 'rgba(255, 23, 68, 0.2)',
-                                  color: pos.side === 'BUY' ? '#00C853' : '#FF1744',
-                                  borderRadius: "2px",
-                                  fontSize: "9px",
-                                  fontWeight: 700
-                                }}>
-                                  {pos.side}
-                                </span>
-                                <span style={{ fontSize: "12px", fontWeight: 600, color: "#FFFFFF" }}>
-                                  x{pos.quantity}
-                                </span>
-                              </div>
-                              <button
-                                onClick={() => closePosition(pos.id)}
-                                style={{
-                                  padding: "2px 8px",
-                                  background: "none",
-                                  border: "1px solid #2A2A2A",
-                                  borderRadius: "2px",
-                                  color: "#6B7280",
-                                  fontSize: "9px",
-                                  fontWeight: 700,
-                                  cursor: "pointer",
-                                  transition: "all 0.15s"
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.borderColor = "#4A4A4A"
-                                  e.currentTarget.style.color = "#A0A0A0"
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.borderColor = "#2A2A2A"
-                                  e.currentTarget.style.color = "#6B7280"
-                                }}
-                              >
-                                CLOSE
-                              </button>
-                            </div>
-                            
-                            <div style={{ 
-                              display: "grid", 
-                              gridTemplateColumns: "1fr 1fr", 
-                              gap: "8px",
-                              fontSize: "10px"
-                            }}>
-                              <div>
-                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Entry</div>
-                                <div style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace", fontWeight: 500 }}>
-                                  {pos.entryPrice.toFixed(2)}
-                                </div>
-                              </div>
-                              <div>
-                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Current</div>
-                                <div style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace", fontWeight: 500 }}>
-                                  {currentPrice.toFixed(2)}
-                                </div>
-                              </div>
-                              <div>
-                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>P&L</div>
-                                <div style={{ 
-                                  color: pnl >= 0 ? '#00C853' : '#FF1744', 
-                                  fontFamily: "'Roboto Mono', monospace",
-                                  fontWeight: 600
-                                }}>
-                                  {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
-                                </div>
-                              </div>
-                              <div>
-                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Return</div>
-                                <div style={{ 
-                                  color: pnlPercent >= 0 ? '#00C853' : '#FF1744', 
-                                  fontFamily: "'Roboto Mono', monospace",
-                                  fontWeight: 600
-                                }}>
-                                  {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <div style={{
-                      textAlign: "center",
-                      padding: "40px 20px",
-                      color: "#4A4A4A",
-                      fontSize: "11px"
-                    }}>
-                      No open positions
-                    </div>
-                  )}
+            {/* Positions/Orders Tabs */}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              {/* Tab Headers */}
+              <div style={{ 
+                display: "flex", 
+                borderBottom: "1px solid #1A1A1A",
+                background: "#000000"
+              }}>
+                <button
+                  onClick={() => setActiveTab('positions')}
+                  style={{
+                    flex: 1,
+                    padding: "16px",
+                    background: activeTab === 'positions' ? '#0A0A0A' : 'transparent',
+                    border: "none",
+                    borderBottom: activeTab === 'positions' ? '2px solid #2196F3' : '2px solid transparent',
+                    color: activeTab === 'positions' ? '#FFFFFF' : '#6B7280',
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    letterSpacing: "1px",
+                    cursor: "pointer",
+                    transition: "all 0.2s"
+                  }}
+                >
+                  POSITIONS {openPositions.length > 0 && `(${openPositions.length})`}
+                </button>
+                <button
+                  onClick={() => setActiveTab('orders')}
+                  style={{
+                    flex: 1,
+                    padding: "16px",
+                    background: activeTab === 'orders' ? '#0A0A0A' : 'transparent',
+                    border: "none",
+                    borderBottom: activeTab === 'orders' ? '2px solid #2196F3' : '2px solid transparent',
+                    color: activeTab === 'orders' ? '#FFFFFF' : '#6B7280',
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    letterSpacing: "1px",
+                    cursor: "pointer",
+                    transition: "all 0.2s"
+                  }}
+                >
+                  ORDERS {pendingOrders.length > 0 && `(${pendingOrders.length})`}
+                </button>
+              </div>
 
-                  {/* Closed Positions Summary */}
-                  {closedPositions.length > 0 && (
-                    <div style={{ 
-                      marginTop: "16px", 
-                      padding: "10px", 
-                      background: "rgba(26, 26, 26, 0.5)", 
-                      border: "1px solid #1A1A1A", 
-                      borderRadius: "4px" 
-                    }}>
-                      <div style={{ fontSize: "10px", color: "#4A4A4A", marginBottom: "6px" }}>
-                        REALIZED P&L
+              {/* Tab Content */}
+              <div style={{ flex: 1, padding: "20px", overflowY: "auto" }}>
+                {activeTab === 'positions' ? (
+                  <>
+                    {openPositions.length > 0 ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                        {openPositions.map((pos) => {
+                          const pnl = pos.side === 'BUY' 
+                            ? (currentPrice - pos.entryPrice) * pos.quantity
+                            : (pos.entryPrice - currentPrice) * pos.quantity
+                          const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100 * (pos.side === 'BUY' ? 1 : -1)
+                          
+                          return (
+                            <div
+                              key={pos.id}
+                              style={{
+                                padding: "14px",
+                                background: pnl >= 0 ? "rgba(0, 200, 83, 0.1)" : "rgba(255, 23, 68, 0.1)",
+                                border: `1px solid ${pnl >= 0 ? "rgba(0, 200, 83, 0.3)" : "rgba(255, 23, 68, 0.3)"}`,
+                                borderRadius: "8px",
+                                transition: "all 0.2s"
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = pnl >= 0 ? "rgba(0, 200, 83, 0.15)" : "rgba(255, 23, 68, 0.15)"
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = pnl >= 0 ? "rgba(0, 200, 83, 0.1)" : "rgba(255, 23, 68, 0.1)"
+                              }}
+                            >
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                  <span style={{
+                                    padding: "4px 8px",
+                                    background: pos.side === 'BUY' ? 'rgba(0, 200, 83, 0.2)' : 'rgba(255, 23, 68, 0.2)',
+                                    color: pos.side === 'BUY' ? '#00C853' : '#FF1744',
+                                    borderRadius: "4px",
+                                    fontSize: "10px",
+                                    fontWeight: 700,
+                                    letterSpacing: "0.5px"
+                                  }}>
+                                    {pos.side}
+                                  </span>
+                                  <span style={{ fontSize: "13px", fontWeight: 700, color: "#FFFFFF" }}>
+                                    ×{pos.quantity}
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => closePosition(pos.id)}
+                                  style={{
+                                    padding: "4px 10px",
+                                    background: "none",
+                                    border: "1px solid #2A2A2A",
+                                    borderRadius: "4px",
+                                    color: "#8B92A8",
+                                    fontSize: "10px",
+                                    fontWeight: 700,
+                                    cursor: "pointer",
+                                    transition: "all 0.2s",
+                                    letterSpacing: "0.5px"
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.borderColor = "#FF1744"
+                                    e.currentTarget.style.color = "#FF1744"
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.borderColor = "#2A2A2A"
+                                    e.currentTarget.style.color = "#8B92A8"
+                                  }}
+                                >
+                                  CLOSE
+                                </button>
+                              </div>
+                              
+                              <div style={{ 
+                                display: "grid", 
+                                gridTemplateColumns: "1fr 1fr", 
+                                gap: "12px",
+                                fontSize: "11px"
+                              }}>
+                                <div>
+                                  <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>Entry</div>
+                                  <div style={{ color: "#E5E7EB", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: "13px" }}>
+                                    {pos.entryPrice.toFixed(2)}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>Current</div>
+                                  <div style={{ color: "#E5E7EB", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: "13px" }}>
+                                    {currentPrice.toFixed(2)}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>P&L</div>
+                                  <div style={{ 
+                                    color: pnl >= 0 ? '#00C853' : '#FF1744', 
+                                    fontFamily: "'JetBrains Mono', monospace",
+                                    fontWeight: 700,
+                                    fontSize: "13px"
+                                  }}>
+                                    {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>Return</div>
+                                  <div style={{ 
+                                    color: pnlPercent >= 0 ? '#00C853' : '#FF1744', 
+                                    fontFamily: "'JetBrains Mono', monospace",
+                                    fontWeight: 700,
+                                    fontSize: "13px"
+                                  }}>
+                                    {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
                       </div>
-                      <div style={{ 
-                        fontSize: "16px", 
-                        fontWeight: 700,
-                        color: realizedPnL >= 0 ? '#00C853' : '#FF1744',
-                        fontFamily: "'Roboto Mono', monospace"
+                    ) : (
+                      <div style={{
+                        textAlign: "center",
+                        padding: "60px 20px",
+                        color: "#4A4A4A",
+                        fontSize: "13px"
                       }}>
-                        {realizedPnL >= 0 ? '+' : ''}{realizedPnL.toFixed(2)}
+                        No open positions
                       </div>
-                      <div style={{ fontSize: "10px", color: "#6B7280", marginTop: "4px" }}>
-                        {closedPositions.length} closed trade{closedPositions.length > 1 ? 's' : ''}
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  {pendingOrders.length > 0 ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                      {pendingOrders.map((order) => {
-                        return (
-                          <div
-                            key={order.id}
-                            style={{
-                              padding: "10px",
-                              background: "rgba(33, 150, 243, 0.08)",
-                              border: "1px solid rgba(33, 150, 243, 0.2)",
-                              borderRadius: "4px",
-                              transition: "all 0.2s"
-                            }}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.background = "rgba(33, 150, 243, 0.12)"
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.background = "rgba(33, 150, 243, 0.08)"
-                            }}
-                          >
-                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
-                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                <span style={{
-                                  padding: "2px 6px",
-                                  background: order.side === 'BUY' ? 'rgba(0, 200, 83, 0.2)' : 'rgba(255, 23, 68, 0.2)',
-                                  color: order.side === 'BUY' ? '#00C853' : '#FF1744',
-                                  borderRadius: "2px",
-                                  fontSize: "9px",
-                                  fontWeight: 700
-                                }}>
-                                  {order.side}
-                                </span>
-                                <span style={{
-                                  padding: "2px 6px",
-                                  background: 'rgba(33, 150, 243, 0.2)',
-                                  color: '#2196F3',
-                                  borderRadius: "2px",
-                                  fontSize: "9px",
-                                  fontWeight: 700
-                                }}>
-                                  {order.orderType}
-                                </span>
-                                <span style={{ fontSize: "12px", fontWeight: 600, color: "#FFFFFF" }}>
-                                  x{order.quantity}
-                                </span>
-                              </div>
-                              <button
-                                onClick={() => cancelOrder(order.id)}
-                                style={{
-                                  padding: "2px 8px",
-                                  background: "none",
-                                  border: "1px solid #2A2A2A",
-                                  borderRadius: "2px",
-                                  color: "#6B7280",
-                                  fontSize: "9px",
-                                  fontWeight: 700,
-                                  cursor: "pointer",
-                                  transition: "all 0.15s"
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.currentTarget.style.borderColor = "#FF1744"
-                                  e.currentTarget.style.color = "#FF1744"
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.currentTarget.style.borderColor = "#2A2A2A"
-                                  e.currentTarget.style.color = "#6B7280"
-                                }}
-                              >
-                                CANCEL
-                              </button>
-                            </div>
-                            
-                            <div style={{ 
-                              display: "grid", 
-                              gridTemplateColumns: "1fr 1fr", 
-                              gap: "8px",
-                              fontSize: "10px"
-                            }}>
-                              <div>
-                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Limit Price</div>
-                                <div style={{ color: "#2196F3", fontFamily: "'Roboto Mono', monospace", fontWeight: 600 }}>
-                                  {order.limitPrice?.toFixed(2)}
-                                </div>
-                              </div>
-                              <div>
-                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Market Price</div>
-                                <div style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace", fontWeight: 500 }}>
-                                  {currentPrice.toFixed(2)}
-                                </div>
-                              </div>
-                              <div style={{ gridColumn: "1 / -1" }}>
-                                <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Distance</div>
-                                <div style={{ 
-                                  color: "#6B7280", 
-                                  fontFamily: "'Roboto Mono', monospace",
-                                  fontWeight: 500
-                                }}>
-                                  {order.limitPrice ? (
-                                    <>
-                                      {Math.abs(currentPrice - order.limitPrice).toFixed(2)} ({Math.abs(((currentPrice - order.limitPrice) / order.limitPrice) * 100).toFixed(2)}%)
-                                    </>
-                                  ) : '-'}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <div style={{
-                      textAlign: "center",
-                      padding: "40px 20px",
-                      color: "#4A4A4A",
-                      fontSize: "11px"
-                    }}>
-                      No pending orders
-                    </div>
-                  )}
+                    )}
 
-                  {/* Filled/Cancelled Orders Summary */}
-                  {orders.filter(o => o.status !== 'PENDING').length > 0 && (
-                    <div style={{ 
-                      marginTop: "16px", 
-                      padding: "10px", 
-                      background: "rgba(26, 26, 26, 0.5)", 
-                      border: "1px solid #1A1A1A", 
-                      borderRadius: "4px" 
-                    }}>
-                      <div style={{ fontSize: "10px", color: "#4A4A4A", marginBottom: "6px" }}>
-                        ORDER HISTORY
+                    {/* Closed Positions Summary */}
+                    {closedPositions.length > 0 && (
+                      <div style={{ 
+                        marginTop: "20px", 
+                        padding: "16px", 
+                        background: "rgba(26, 26, 26, 0.5)", 
+                        border: "1px solid #1A1A1A", 
+                        borderRadius: "8px" 
+                      }}>
+                        <div style={{ fontSize: "11px", color: "#6B7280", marginBottom: "8px", fontWeight: 700, letterSpacing: "0.5px" }}>
+                          REALIZED P&L
+                        </div>
+                        <div style={{ 
+                          fontSize: "20px", 
+                          fontWeight: 700,
+                          color: realizedPnL >= 0 ? '#00C853' : '#FF1744',
+                          fontFamily: "'JetBrains Mono', monospace"
+                        }}>
+                          {realizedPnL >= 0 ? '+' : ''}{realizedPnL.toFixed(2)}
+                        </div>
+                        <div style={{ fontSize: "11px", color: "#8B92A8", marginTop: "6px" }}>
+                          {closedPositions.length} closed trade{closedPositions.length > 1 ? 's' : ''}
+                        </div>
                       </div>
-                      <div style={{ fontSize: "11px", color: "#6B7280" }}>
-                        {orders.filter(o => o.status === 'FILLED').length} filled, {orders.filter(o => o.status === 'CANCELLED').length} cancelled
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {pendingOrders.length > 0 ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                        {pendingOrders.map((order) => {
+                          return (
+                            <div
+                              key={order.id}
+                              style={{
+                                padding: "14px",
+                                background: "rgba(33, 150, 243, 0.1)",
+                                border: "1px solid rgba(33, 150, 243, 0.3)",
+                                borderRadius: "8px",
+                                transition: "all 0.2s"
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = "rgba(33, 150, 243, 0.15)"
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = "rgba(33, 150, 243, 0.1)"
+                              }}
+                            >
+                              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "12px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                  <span style={{
+                                    padding: "4px 8px",
+                                    background: order.side === 'BUY' ? 'rgba(0, 200, 83, 0.2)' : 'rgba(255, 23, 68, 0.2)',
+                                    color: order.side === 'BUY' ? '#00C853' : '#FF1744',
+                                    borderRadius: "4px",
+                                    fontSize: "10px",
+                                    fontWeight: 700,
+                                    letterSpacing: "0.5px"
+                                  }}>
+                                    {order.side}
+                                  </span>
+                                  <span style={{
+                                    padding: "4px 8px",
+                                    background: 'rgba(33, 150, 243, 0.2)',
+                                    color: '#2196F3',
+                                    borderRadius: "4px",
+                                    fontSize: "10px",
+                                    fontWeight: 700,
+                                    letterSpacing: "0.5px"
+                                  }}>
+                                    {order.orderType}
+                                  </span>
+                                  <span style={{ fontSize: "13px", fontWeight: 700, color: "#FFFFFF" }}>
+                                    ×{order.quantity}
+                                  </span>
+                                </div>
+                                <button
+                                  onClick={() => cancelOrder(order.id)}
+                                  style={{
+                                    padding: "4px 10px",
+                                    background: "none",
+                                    border: "1px solid #2A2A2A",
+                                    borderRadius: "4px",
+                                    color: "#8B92A8",
+                                    fontSize: "10px",
+                                    fontWeight: 700,
+                                    cursor: "pointer",
+                                    transition: "all 0.2s",
+                                    letterSpacing: "0.5px"
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.borderColor = "#FF1744"
+                                    e.currentTarget.style.color = "#FF1744"
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.borderColor = "#2A2A2A"
+                                    e.currentTarget.style.color = "#8B92A8"
+                                  }}
+                                >
+                                  CANCEL
+                                </button>
+                              </div>
+                              
+                              <div style={{ 
+                                display: "grid", 
+                                gridTemplateColumns: "1fr 1fr", 
+                                gap: "12px",
+                                fontSize: "11px"
+                              }}>
+                                <div>
+                                  <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>Limit Price</div>
+                                  <div style={{ color: "#2196F3", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: "13px" }}>
+                                    {order.limitPrice?.toFixed(2)}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>Market</div>
+                                  <div style={{ color: "#E5E7EB", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: "13px" }}>
+                                    {currentPrice.toFixed(2)}
+                                  </div>
+                                </div>
+                                <div style={{ gridColumn: "1 / -1" }}>
+                                  <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>Distance to Fill</div>
+                                  <div style={{ 
+                                    color: "#8B92A8", 
+                                    fontFamily: "'JetBrains Mono', monospace",
+                                    fontWeight: 600,
+                                    fontSize: "13px"
+                                  }}>
+                                    {order.limitPrice ? (
+                                      <>
+                                        {Math.abs(currentPrice - order.limitPrice).toFixed(2)} ({Math.abs(((currentPrice - order.limitPrice) / order.limitPrice) * 100).toFixed(2)}%)
+                                      </>
+                                    ) : '-'}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
                       </div>
-                    </div>
-                  )}
-                </>
-              )}
+                    ) : (
+                      <div style={{
+                        textAlign: "center",
+                        padding: "60px 20px",
+                        color: "#4A4A4A",
+                        fontSize: "13px"
+                      }}>
+                        No pending orders
+                      </div>
+                    )}
+
+                    {/* Filled/Cancelled Orders Summary */}
+                    {orders.filter(o => o.status !== 'PENDING').length > 0 && (
+                      <div style={{ 
+                        marginTop: "20px", 
+                        padding: "16px", 
+                        background: "rgba(26, 26, 26, 0.5)", 
+                        border: "1px solid #1A1A1A", 
+                        borderRadius: "8px" 
+                      }}>
+                        <div style={{ fontSize: "11px", color: "#6B7280", marginBottom: "8px", fontWeight: 700, letterSpacing: "0.5px" }}>
+                          ORDER HISTORY
+                        </div>
+                        <div style={{ fontSize: "12px", color: "#8B92A8" }}>
+                          {orders.filter(o => o.status === 'FILLED').length} filled · {orders.filter(o => o.status === 'CANCELLED').length} cancelled
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1554,7 +1788,8 @@ export default function Dashboard() {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0, 0, 0, 0.8)",
+            background: "rgba(0, 0, 0, 0.85)",
+            backdropFilter: "blur(4px)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -1566,15 +1801,16 @@ export default function Dashboard() {
             style={{
               background: "#0A0A0A",
               border: "1px solid #2A2A2A",
-              borderRadius: "8px",
-              padding: "24px",
-              width: "400px",
-              maxWidth: "90vw"
+              borderRadius: "12px",
+              padding: "32px",
+              width: "440px",
+              maxWidth: "90vw",
+              boxShadow: "0 20px 60px rgba(0, 0, 0, 0.5)"
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
-              <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#FFFFFF", margin: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: 700, color: "#FFFFFF", margin: 0, letterSpacing: "0.5px" }}>
                 NEW ORDER
               </h3>
               <button
@@ -1583,11 +1819,14 @@ export default function Dashboard() {
                   background: "none",
                   border: "none",
                   color: "#6B7280",
-                  fontSize: "18px",
+                  fontSize: "24px",
                   cursor: "pointer",
                   padding: 0,
-                  lineHeight: 1
+                  lineHeight: 1,
+                  transition: "color 0.2s"
                 }}
+                onMouseEnter={(e) => e.currentTarget.style.color = "#E5E7EB"}
+                onMouseLeave={(e) => e.currentTarget.style.color = "#6B7280"}
               >
                 ×
               </button>
@@ -1595,43 +1834,45 @@ export default function Dashboard() {
 
             {/* Current Price */}
             <div style={{
-              padding: "12px",
+              padding: "16px",
               background: "#000000",
               border: "1px solid #1A1A1A",
-              borderRadius: "4px",
-              marginBottom: "20px"
+              borderRadius: "8px",
+              marginBottom: "24px"
             }}>
-              <div style={{ fontSize: "10px", color: "#6B7280", marginBottom: "4px" }}>
+              <div style={{ fontSize: "11px", color: "#8B92A8", marginBottom: "6px", fontWeight: 600, letterSpacing: "0.5px" }}>
                 LAST PRICE
               </div>
               <div style={{ 
-                fontSize: "20px", 
+                fontSize: "24px", 
                 fontWeight: 700, 
                 color: "#FFFFFF",
-                fontFamily: "'Roboto Mono', monospace"
+                fontFamily: "'JetBrains Mono', monospace"
               }}>
                 {currentPrice.toFixed(2)}
               </div>
             </div>
 
             {/* Order Type */}
-            <div style={{ marginBottom: "16px" }}>
-              <div style={{ fontSize: "10px", color: "#6B7280", marginBottom: "8px", fontWeight: 700, letterSpacing: "0.5px" }}>
+            <div style={{ marginBottom: "20px" }}>
+              <div style={{ fontSize: "11px", color: "#8B92A8", marginBottom: "12px", fontWeight: 700, letterSpacing: "0.5px" }}>
                 ORDER TYPE
               </div>
-              <div style={{ display: "flex", gap: "8px" }}>
+              <div style={{ display: "flex", gap: "12px" }}>
                 <button
                   onClick={() => setOrderType('MARKET')}
                   style={{
                     flex: 1,
-                    padding: "10px",
+                    padding: "14px",
                     background: orderType === 'MARKET' ? '#1A1A1A' : '#000000',
-                    border: orderType === 'MARKET' ? '1px solid #4A4A4A' : '1px solid #1A1A1A',
-                    borderRadius: "4px",
-                    color: orderType === 'MARKET' ? '#FFFFFF' : '#6B7280',
-                    fontWeight: 600,
-                    fontSize: "11px",
-                    cursor: "pointer"
+                    border: orderType === 'MARKET' ? '1px solid #2196F3' : '1px solid #1A1A1A',
+                    borderRadius: "8px",
+                    color: orderType === 'MARKET' ? '#FFFFFF' : '#8B92A8',
+                    fontWeight: 700,
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                    letterSpacing: "0.5px"
                   }}
                 >
                   MARKET
@@ -1640,14 +1881,16 @@ export default function Dashboard() {
                   onClick={() => setOrderType('LIMIT')}
                   style={{
                     flex: 1,
-                    padding: "10px",
+                    padding: "14px",
                     background: orderType === 'LIMIT' ? '#1A1A1A' : '#000000',
-                    border: orderType === 'LIMIT' ? '1px solid #4A4A4A' : '1px solid #1A1A1A',
-                    borderRadius: "4px",
-                    color: orderType === 'LIMIT' ? '#FFFFFF' : '#6B7280',
-                    fontWeight: 600,
-                    fontSize: "11px",
-                    cursor: "pointer"
+                    border: orderType === 'LIMIT' ? '1px solid #2196F3' : '1px solid #1A1A1A',
+                    borderRadius: "8px",
+                    color: orderType === 'LIMIT' ? '#FFFFFF' : '#8B92A8',
+                    fontWeight: 700,
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                    letterSpacing: "0.5px"
                   }}
                 >
                   LIMIT
@@ -1657,8 +1900,8 @@ export default function Dashboard() {
 
             {/* Limit Price */}
             {orderType === 'LIMIT' && (
-              <div style={{ marginBottom: "16px" }}>
-                <div style={{ fontSize: "10px", color: "#6B7280", marginBottom: "8px", fontWeight: 700, letterSpacing: "0.5px" }}>
+              <div style={{ marginBottom: "20px" }}>
+                <div style={{ fontSize: "11px", color: "#8B92A8", marginBottom: "12px", fontWeight: 700, letterSpacing: "0.5px" }}>
                   LIMIT PRICE
                 </div>
                 <input
@@ -1669,23 +1912,26 @@ export default function Dashboard() {
                   placeholder="Enter price"
                   style={{
                     width: "100%",
-                    padding: "10px 12px",
+                    padding: "14px 16px",
                     background: "#000000",
                     border: "1px solid #1A1A1A",
-                    borderRadius: "4px",
+                    borderRadius: "8px",
                     color: "#FFFFFF",
-                    fontSize: "13px",
-                    fontWeight: 500,
-                    fontFamily: "'Roboto Mono', monospace",
-                    outline: "none"
+                    fontSize: "14px",
+                    fontWeight: 600,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    outline: "none",
+                    transition: "border-color 0.2s"
                   }}
+                  onFocus={(e) => e.currentTarget.style.borderColor = "#2196F3"}
+                  onBlur={(e) => e.currentTarget.style.borderColor = "#1A1A1A"}
                 />
               </div>
             )}
 
             {/* Quantity */}
-            <div style={{ marginBottom: "20px" }}>
-              <div style={{ fontSize: "10px", color: "#6B7280", marginBottom: "8px", fontWeight: 700, letterSpacing: "0.5px" }}>
+            <div style={{ marginBottom: "28px" }}>
+              <div style={{ fontSize: "11px", color: "#8B92A8", marginBottom: "12px", fontWeight: 700, letterSpacing: "0.5px" }}>
                 QUANTITY
               </div>
               <input
@@ -1695,16 +1941,19 @@ export default function Dashboard() {
                 onChange={(e) => setOrderQuantity(Number(e.target.value))}
                 style={{
                   width: "100%",
-                  padding: "10px 12px",
+                  padding: "14px 16px",
                   background: "#000000",
                   border: "1px solid #1A1A1A",
-                  borderRadius: "4px",
+                  borderRadius: "8px",
                   color: "#FFFFFF",
-                  fontSize: "13px",
-                  fontWeight: 500,
-                  fontFamily: "'Roboto Mono', monospace",
-                  outline: "none"
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  outline: "none",
+                  transition: "border-color 0.2s"
                 }}
+                onFocus={(e) => e.currentTarget.style.borderColor = "#2196F3"}
+                onBlur={(e) => e.currentTarget.style.borderColor = "#1A1A1A"}
               />
             </div>
 
@@ -1714,15 +1963,24 @@ export default function Dashboard() {
                 onClick={() => executeTrade('BUY')}
                 style={{
                   flex: 1,
-                  padding: "14px",
+                  padding: "16px",
                   background: "#00C853",
                   border: "none",
-                  borderRadius: "4px",
+                  borderRadius: "8px",
                   color: "#000000",
                   fontWeight: 700,
-                  fontSize: "13px",
+                  fontSize: "14px",
                   cursor: "pointer",
-                  letterSpacing: "0.5px"
+                  letterSpacing: "0.5px",
+                  transition: "all 0.2s"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "#00E676"
+                  e.currentTarget.style.transform = "translateY(-2px)"
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "#00C853"
+                  e.currentTarget.style.transform = "translateY(0)"
                 }}
               >
                 BUY
@@ -1731,15 +1989,24 @@ export default function Dashboard() {
                 onClick={() => executeTrade('SELL')}
                 style={{
                   flex: 1,
-                  padding: "14px",
+                  padding: "16px",
                   background: "#FF1744",
                   border: "none",
-                  borderRadius: "4px",
+                  borderRadius: "8px",
                   color: "#FFFFFF",
                   fontWeight: 700,
-                  fontSize: "13px",
+                  fontSize: "14px",
                   cursor: "pointer",
-                  letterSpacing: "0.5px"
+                  letterSpacing: "0.5px",
+                  transition: "all 0.2s"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "#FF5252"
+                  e.currentTarget.style.transform = "translateY(-2px)"
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "#FF1744"
+                  e.currentTarget.style.transform = "translateY(0)"
                 }}
               >
                 SELL
@@ -1756,7 +2023,7 @@ export default function Dashboard() {
 function MetricCard({ 
   label, 
   value, 
-  color = "#A0A0A0" 
+  color = "#8B92A8" 
 }: { 
   label: string
   value: string
@@ -1764,15 +2031,25 @@ function MetricCard({
 }) {
   return (
     <div style={{
-      padding: "8px",
+      padding: "12px",
       background: "#000000",
       border: "1px solid #1A1A1A",
-      borderRadius: "4px"
-    }}>
-      <div style={{ fontSize: "9px", color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>
+      borderRadius: "8px",
+      transition: "all 0.2s"
+    }}
+    onMouseEnter={(e) => {
+      e.currentTarget.style.borderColor = "#2A2A2A"
+      e.currentTarget.style.transform = "translateY(-2px)"
+    }}
+    onMouseLeave={(e) => {
+      e.currentTarget.style.borderColor = "#1A1A1A"
+      e.currentTarget.style.transform = "translateY(0)"
+    }}
+    >
+      <div style={{ fontSize: "10px", color: "#6B7280", marginBottom: "6px", fontWeight: 700, letterSpacing: "0.5px" }}>
         {label}
       </div>
-      <div style={{ fontSize: "14px", fontWeight: 600, color, fontFamily: "'Roboto Mono', monospace" }}>
+      <div style={{ fontSize: "16px", fontWeight: 700, color, fontFamily: "'JetBrains Mono', monospace" }}>
         {value}
       </div>
     </div>
@@ -1797,32 +2074,44 @@ function IndicatorToggle({
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "8px",
-        borderRadius: "4px",
+        padding: "12px",
+        borderRadius: "6px",
         cursor: "pointer",
         background: enabled ? '#000000' : 'transparent',
         border: `1px solid ${enabled ? '#1A1A1A' : 'transparent'}`,
-        transition: "all 0.15s"
+        transition: "all 0.2s"
+      }}
+      onMouseEnter={(e) => {
+        if (!enabled) {
+          e.currentTarget.style.background = "#0A0A0A"
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!enabled) {
+          e.currentTarget.style.background = "transparent"
+        }
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
         <div style={{
-          width: "12px",
-          height: "12px",
-          borderRadius: "2px",
+          width: "14px",
+          height: "14px",
+          borderRadius: "3px",
           background: enabled ? color : 'transparent',
           border: `2px solid ${color}`,
-          transition: "all 0.15s"
+          transition: "all 0.2s"
         }} />
-        <span style={{ fontSize: "11px", color: enabled ? "#FFFFFF" : "#6B7280", fontWeight: 500 }}>
+        <span style={{ fontSize: "12px", color: enabled ? "#FFFFFF" : "#8B92A8", fontWeight: 600 }}>
           {label}
         </span>
       </div>
       <div style={{
-        width: "20px",
-        height: "2px",
+        width: "24px",
+        height: "3px",
+        borderRadius: "2px",
         background: color,
-        opacity: enabled ? 1 : 0.3
+        opacity: enabled ? 1 : 0.3,
+        transition: "all 0.2s"
       }} />
     </div>
   )
