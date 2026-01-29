@@ -41,11 +41,9 @@ function calculateEMA(data: CandlestickData<Time>[], period: number): LineData<T
   
   const multiplier = 2 / (period + 1)
   
-  // Start with SMA for first value
   const firstSMA = data.slice(0, period).reduce((acc, candle) => acc + candle.close, 0) / period
   result.push({ time: data[period - 1].time, value: firstSMA })
   
-  // Calculate EMA for remaining values
   for (let i = period; i < data.length; i++) {
     const ema = (data[i].close - result[result.length - 1].value) * multiplier + result[result.length - 1].value
     result.push({ time: data[i].time, value: ema })
@@ -57,7 +55,6 @@ function calculateEMA(data: CandlestickData<Time>[], period: number): LineData<T
 function calculateRSI(data: CandlestickData<Time>[], period: number = 14): LineData<Time>[] {
   const result: LineData<Time>[] = []
   
-  // Need at least period + 1 candles to calculate RSI
   if (data.length <= period) {
     return result
   }
@@ -65,7 +62,6 @@ function calculateRSI(data: CandlestickData<Time>[], period: number = 14): LineD
   let gains = 0
   let losses = 0
   
-  // Calculate initial average gain/loss
   for (let i = 1; i <= period; i++) {
     if (!data[i] || !data[i - 1]) continue
     const change = data[i].close - data[i - 1].close
@@ -76,7 +72,6 @@ function calculateRSI(data: CandlestickData<Time>[], period: number = 14): LineD
   let avgGain = gains / period
   let avgLoss = losses / period
   
-  // Calculate RSI for each subsequent period
   for (let i = period; i < data.length; i++) {
     if (!data[i] || !data[i - 1]) continue
     const change = data[i].close - data[i - 1].close
@@ -118,26 +113,121 @@ function calculateBollingerBands(data: CandlestickData<Time>[], period: number =
   return { upper, middle, lower }
 }
 
-function calculateMACD(data: CandlestickData<Time>[], fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
-  const emaFast = calculateEMA(data, fastPeriod)
-  const emaSlow = calculateEMA(data, slowPeriod)
+function calculateStochasticRSI(data: CandlestickData<Time>[], rsiPeriod = 14, stochPeriod = 14): number {
+  const rsiValues = calculateRSI(data, rsiPeriod)
   
-  const macdLine: LineData<Time>[] = []
-  const startIndex = Math.max(0, slowPeriod - fastPeriod)
+  if (rsiValues.length < stochPeriod) return 0
   
-  for (let i = 0; i < emaFast.length - startIndex; i++) {
-    macdLine.push({
-      time: emaFast[i + startIndex].time,
-      value: emaFast[i + startIndex].value - emaSlow[i].value
-    })
+  const recentRSI = rsiValues.slice(-stochPeriod)
+  const rsiHigh = Math.max(...recentRSI.map(v => v.value))
+  const rsiLow = Math.min(...recentRSI.map(v => v.value))
+  const currentRSI = rsiValues[rsiValues.length - 1].value
+  
+  const stochRSI = rsiHigh === rsiLow ? 0 : ((currentRSI - rsiLow) / (rsiHigh - rsiLow)) * 100
+  return stochRSI
+}
+
+function calculateADX(data: CandlestickData<Time>[], period = 14): number {
+  if (data.length < period + 1) return 0
+  
+  let plusDM = 0, minusDM = 0, tr = 0
+  
+  for (let i = 1; i <= period; i++) {
+    const high = data[i].high
+    const low = data[i].low
+    const prevHigh = data[i - 1].high
+    const prevLow = data[i - 1].low
+    const prevClose = data[i - 1].close
+    
+    const upMove = high - prevHigh
+    const downMove = prevLow - low
+    
+    plusDM += (upMove > downMove && upMove > 0) ? upMove : 0
+    minusDM += (downMove > upMove && downMove > 0) ? downMove : 0
+    
+    tr += Math.max(
+      high - low,
+      Math.abs(high - prevClose),
+      Math.abs(low - prevClose)
+    )
   }
   
-  const signalLine = calculateEMA(
-    macdLine.map(m => ({ time: m.time, open: m.value, high: m.value, low: m.value, close: m.value })),
-    signalPeriod
-  )
+  let plusDI = (plusDM / tr) * 100
+  let minusDI = (minusDM / tr) * 100
   
-  return { macdLine, signalLine }
+  for (let i = period + 1; i < data.length; i++) {
+    const high = data[i].high
+    const low = data[i].low
+    const prevHigh = data[i - 1].high
+    const prevLow = data[i - 1].low
+    const prevClose = data[i - 1].close
+    
+    const upMove = high - prevHigh
+    const downMove = prevLow - low
+    
+    const currentPlusDM = (upMove > downMove && upMove > 0) ? upMove : 0
+    const currentMinusDM = (downMove > upMove && downMove > 0) ? downMove : 0
+    const currentTR = Math.max(
+      high - low,
+      Math.abs(high - prevClose),
+      Math.abs(low - prevClose)
+    )
+    
+    plusDM = plusDM - (plusDM / period) + currentPlusDM
+    minusDM = minusDM - (minusDM / period) + currentMinusDM
+    tr = tr - (tr / period) + currentTR
+    
+    plusDI = (plusDM / tr) * 100
+    minusDI = (minusDM / tr) * 100
+  }
+  
+  const dx = Math.abs(plusDI - minusDI) / (plusDI + minusDI) * 100
+  return dx
+}
+
+function calculateOBV(data: CandlestickData<Time>[]): number {
+  if (data.length < 2) return 0
+  
+  let obv = 0
+  for (let i = 1; i < data.length; i++) {
+    const volume = 0
+    if (data[i].close > data[i - 1].close) {
+      obv += volume
+    } else if (data[i].close < data[i - 1].close) {
+      obv -= volume
+    }
+  }
+  
+  return obv
+}
+
+function calculateVWAP(data: CandlestickData<Time>[]): number {
+  if (data.length === 0) return 0
+  
+  let cumVolume = 0
+  let cumVolPrice = 0
+  
+  for (const candle of data) {
+    const typical = (candle.high + candle.low + candle.close) / 3
+    const volume =  0
+    cumVolPrice += typical * volume
+    cumVolume += volume
+  }
+  
+  return cumVolume === 0 ? 0 : cumVolPrice / cumVolume
+}
+
+type Position = {
+  id: string
+  symbol: string
+  side: 'BUY' | 'SELL'
+  quantity: number
+  entryPrice: number
+  currentPrice: number
+  timestamp: number
+  status: 'OPEN' | 'CLOSED'
+  exitPrice?: number
+  exitTimestamp?: number
 }
 
 export default function Dashboard() {
@@ -156,6 +246,13 @@ export default function Dashboard() {
     bollinger: false,
   })
 
+  // Trading State
+  const [showTradePanel, setShowTradePanel] = useState(false)
+  const [orderQuantity, setOrderQuantity] = useState(1)
+  const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET')
+  const [limitPrice, setLimitPrice] = useState<string>('')
+  const [positions, setPositions] = useState<Position[]>([])
+
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<any>(null)
@@ -166,30 +263,16 @@ export default function Dashboard() {
   const candles = useReplayStore((s) => s.candles)
   const reset = useReplayStore((s) => s.reset)
 
-  // Log candles state changes
-  useEffect(() => {
-    console.log('[CANDLES STATE] Updated - length:', candles.length)
-    if (candles.length > 0) {
-      console.log('[CANDLES STATE] First candle:', candles[0])
-      console.log('[CANDLES STATE] Last candle:', candles[candles.length - 1])
-    }
-  }, [candles])
+  const currentPrice = candles.length > 0 ? candles[candles.length - 1].close : 0
 
-  // Calculate timeframe statistics (CORRECTED)
+  // Calculate timeframe statistics
   const stats = candles.length > 0 ? {
-    // First candle's open is the period open
     open: candles[0].open,
-    // Current candle's close is the current price
     close: candles[candles.length - 1].close,
-    // Highest high across all candles
     high: Math.max(...candles.map(c => c.high)),
-    // Lowest low across all candles
     low: Math.min(...candles.map(c => c.low)),
-    // Total volume
     volume: candles.reduce((sum, c) => sum + (c.volume || 0), 0),
-    // Price change from first open to current close
     priceChange: candles[candles.length - 1].close - candles[0].open,
-    // Number of candles
     count: candles.length,
   } : null
 
@@ -197,15 +280,100 @@ export default function Dashboard() {
     ? (stats.priceChange / stats.open) * 100
     : 0
 
+  // Calculate positions P&L
+  const openPositions = positions.filter(p => p.status === 'OPEN')
+  const totalPnL = openPositions.reduce((sum, pos) => {
+    const priceDiff = pos.side === 'BUY' 
+      ? currentPrice - pos.entryPrice 
+      : pos.entryPrice - currentPrice
+    return sum + (priceDiff * pos.quantity)
+  }, 0)
+
+  const closedPositions = positions.filter(p => p.status === 'CLOSED')
+  const realizedPnL = closedPositions.reduce((sum, pos) => {
+    if (!pos.exitPrice) return sum
+    const priceDiff = pos.side === 'BUY'
+      ? pos.exitPrice - pos.entryPrice
+      : pos.entryPrice - pos.exitPrice
+    return sum + (priceDiff * pos.quantity)
+  }, 0)
+
+  // Execute Trade
+  const executeTrade = (side: 'BUY' | 'SELL') => {
+    if (orderQuantity <= 0 || currentPrice === 0) return
+
+    const price = orderType === 'MARKET' ? currentPrice : parseFloat(limitPrice)
+    
+    if (orderType === 'LIMIT' && (!limitPrice || isNaN(price))) {
+      alert('Please enter a valid limit price')
+      return
+    }
+
+    const newPosition: Position = {
+      id: `${Date.now()}-${Math.random()}`,
+      symbol,
+      side,
+      quantity: orderQuantity,
+      entryPrice: price,
+      currentPrice: price,
+      timestamp: Date.now(),
+      status: 'OPEN'
+    }
+
+    setPositions(prev => [...prev, newPosition])
+    setShowTradePanel(false)
+  }
+
+  // Close Position
+  const closePosition = (positionId: string) => {
+    setPositions(prev => prev.map(pos => {
+      if (pos.id === positionId && pos.status === 'OPEN') {
+        return {
+          ...pos,
+          status: 'CLOSED' as const,
+          exitPrice: currentPrice,
+          exitTimestamp: Date.now()
+        }
+      }
+      return pos
+    }))
+  }
+
+  // Update current prices for open positions
+  useEffect(() => {
+    if (currentPrice === 0) return
+    
+    setPositions(prev => prev.map(pos => {
+      if (pos.status === 'OPEN') {
+        return { ...pos, currentPrice }
+      }
+      return pos
+    }))
+  }, [currentPrice])
+
   // Additional metrics
   const metrics = candles.length > 0 ? {
-    // Current RSI - safely calculate
     rsi: (() => {
       if (candles.length < 15) return 0
       const rsiData = calculateRSI(candles)
       return rsiData.length > 0 ? rsiData[rsiData.length - 1].value : 0
     })(),
-    // Volatility (standard deviation of returns)
+    stochRSI: (() => {
+      if (candles.length < 30) return 0
+      return calculateStochasticRSI(candles)
+    })(),
+    adx: (() => {
+      if (candles.length < 15) return 0
+      return calculateADX(candles)
+    })(),
+    obv: (() => {
+      if (candles.length < 2) return 0
+      return calculateOBV(candles)
+    })(),
+    vwap: (() => {
+      if (candles.length < 1) return 0
+      return calculateVWAP(candles)
+    })(),
     volatility: (() => {
       if (candles.length < 2) return 0
       const returns = candles.slice(1).map((c, i) => 
@@ -215,7 +383,6 @@ export default function Dashboard() {
       const variance = returns.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) / returns.length
       return Math.sqrt(variance) * 100
     })(),
-    // Average true range (volatility measure)
     atr: (() => {
       if (candles.length < 2) return 0
       const trs = candles.slice(1).map((c, i) => {
@@ -228,11 +395,8 @@ export default function Dashboard() {
       })
       return trs.reduce((a, b) => a + b, 0) / trs.length
     })(),
-    // Up/Down candles ratio
     bullishCandles: candles.filter(c => c.close > c.open).length,
     bearishCandles: candles.filter(c => c.close < c.open).length,
-    // Average candle body size
-    avgBodySize: candles.reduce((sum, c) => sum + Math.abs(c.close - c.open), 0) / candles.length,
   } : null
 
   /* ===== SYMBOLS ===== */
@@ -249,42 +413,25 @@ export default function Dashboard() {
 
   /* ===== AUTO-RESET ON PARAMETER CHANGE ===== */
   useEffect(() => {
-    // Skip on initial mount
     if (isInitialMount.current) {
-      console.log('[PARAMS EFFECT] Initial mount, skipping')
       isInitialMount.current = false
       return
     }
 
-    // When any parameter changes, just reset data (don't change play state)
-    console.log('[PARAMS CHANGED] Resetting data')
-    console.log('[PARAMS CHANGED] Symbol:', symbol, 'Start:', start, 'End:', end, 'TimeScale:', timeScale, 'GapScale:', gapScale)
     initializedRef.current = false
     
-    // Clear the chart data
     if (seriesRef.current) {
-      console.log('[PARAMS CHANGED] Clearing series data')
       seriesRef.current.setData([])
-    } else {
-      console.log('[PARAMS CHANGED] No seriesRef to clear')
     }
     
-    // Clear all indicator series
-    console.log('[PARAMS CHANGED] Clearing indicator series')
     Object.values(indicatorSeriesRef.current).forEach(series => {
       series.setData([])
     })
     
-    // Reset the store
-    console.log('[PARAMS CHANGED] Calling reset()')
     reset()
-    
-    // Note: We don't change the playing state here
-    // The user's play/pause preference is preserved
   }, [symbol, start, end, timeScale, gapScale, reset])
 
   /* ===== SOCKET ===== */
-  // Socket is always enabled except during replay reset
   const [socketEnabled, setSocketEnabled] = useState(true)
   
   const { isConnected } = useReplaySocket({
@@ -299,59 +446,50 @@ export default function Dashboard() {
 
   /* ===== CHART INIT ===== */
   useEffect(() => {
-    console.log('[CHART INIT] Running - containerRef exists:', !!containerRef.current, 'chartRef exists:', !!chartRef.current)
-    
-    if (!containerRef.current) {
-      console.log('[CHART INIT] No container ref, skipping')
-      return
-    }
-    
-    if (chartRef.current) {
-      console.log('[CHART INIT] Chart already exists, skipping')
-      return
-    }
+    if (!containerRef.current) return
+    if (chartRef.current) return
 
-    console.log('[CHART INIT] Creating chart...')
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { color: "#0a0e27" },
-        textColor: "#d1d4dc",
-        fontSize: 12,
+        background: { color: "#000000" },
+        textColor: "#8B92A8",
+        fontSize: 11,
       },
       grid: {
-        vertLines: { color: "#1a1e3a" },
-        horzLines: { color: "#1a1e3a" },
+        vertLines: { color: "#0A0A0A" },
+        horzLines: { color: "#0A0A0A" },
       },
       rightPriceScale: {
-        borderColor: "#2a2e45",
+        borderColor: "#1A1A1A",
         scaleMargins: {
           top: 0.05,
           bottom: 0.05,
         },
       },
       timeScale: {
-        borderColor: "#2a2e45",
+        borderColor: "#1A1A1A",
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 5,
-        barSpacing: 6,
-        minBarSpacing: 2,
+        rightOffset: 12,
+        barSpacing: 10,
+        minBarSpacing: 3,
         fixLeftEdge: false,
         fixRightEdge: false,
+        lockVisibleTimeRangeOnResize: true,
       },
       crosshair: {
         mode: 1,
         vertLine: {
-          color: "#758696",
+          color: "#2A2A2A",
           width: 1,
-          style: 3,
-          labelBackgroundColor: "#363c4e",
+          style: 2,
+          labelBackgroundColor: "#1A1A1A",
         },
         horzLine: {
-          color: "#758696",
+          color: "#2A2A2A",
           width: 1,
-          style: 3,
-          labelBackgroundColor: "#363c4e",
+          style: 2,
+          labelBackgroundColor: "#1A1A1A",
         },
       },
       handleScroll: {
@@ -367,47 +505,42 @@ export default function Dashboard() {
       },
       autoSize: true,
     })
-    console.log('[CHART INIT] Chart created successfully')
 
-    console.log('[CHART INIT] Adding candlestick series...')
     const series = chart.addSeries(CandlestickSeries, {
-      upColor: "#26a69a",
-      downColor: "#ef5350",
-      wickUpColor: "#26a69a",
-      wickDownColor: "#ef5350",
+      upColor: "#00C853",
+      downColor: "#FF1744",
+      wickUpColor: "#00C853",
+      wickDownColor: "#FF1744",
       borderVisible: false,
     })
-    console.log('[CHART INIT] Candlestick series added')
 
     chartRef.current = chart
     seriesRef.current = series
 
-    console.log('[CHART INIT] Adding indicator series...')
-    // Initialize indicator series
     indicatorSeriesRef.current.sma20 = chart.addSeries(LineSeries, {
-      color: "#2962FF",
-      lineWidth: 2,
+      color: "#2196F3",
+      lineWidth: 1,
       title: "SMA 20",
       visible: showIndicators.sma20,
     })
 
     indicatorSeriesRef.current.sma50 = chart.addSeries(LineSeries, {
-      color: "#FF6D00",
-      lineWidth: 2,
+      color: "#FF9800",
+      lineWidth: 1,
       title: "SMA 50",
       visible: showIndicators.sma50,
     })
 
     indicatorSeriesRef.current.ema12 = chart.addSeries(LineSeries, {
       color: "#00E676",
-      lineWidth: 2,
+      lineWidth: 1,
       title: "EMA 12",
       visible: showIndicators.ema12,
     })
 
     indicatorSeriesRef.current.ema26 = chart.addSeries(LineSeries, {
-      color: "#D500F9",
-      lineWidth: 2,
+      color: "#FFC107",
+      lineWidth: 1,
       title: "EMA 26",
       visible: showIndicators.ema26,
     })
@@ -421,7 +554,7 @@ export default function Dashboard() {
 
     indicatorSeriesRef.current.bbMiddle = chart.addSeries(LineSeries, {
       color: "#9C27B0",
-      lineWidth: 2,
+      lineWidth: 1,
       title: "BB Middle",
       visible: showIndicators.bollinger,
     })
@@ -432,11 +565,17 @@ export default function Dashboard() {
       title: "BB Lower",
       visible: showIndicators.bollinger,
     })
-    console.log('[CHART INIT] All indicator series added')
-    console.log('[CHART INIT] Initialization complete')
+
+    const handleResize = () => {
+      if (chartRef.current) {
+        chartRef.current.resize(containerRef.current?.clientWidth || 0, containerRef.current?.clientHeight || 0)
+      }
+    }
+
+    window.addEventListener('resize', handleResize)
 
     return () => {
-      console.log('[CHART INIT] Cleanup - removing chart')
+      window.removeEventListener('resize', handleResize)
       chart.remove()
       chartRef.current = null
       seriesRef.current = null
@@ -461,87 +600,50 @@ export default function Dashboard() {
 
   /* ===== DATA & INDICATORS UPDATE ===== */
   useEffect(() => {
-    console.log('[DATA EFFECT] Running - candles.length:', candles.length, 'seriesRef exists:', !!seriesRef.current, 'chartRef exists:', !!chartRef.current)
-    
-    if (!seriesRef.current) {
-      console.log('[DATA EFFECT] No seriesRef, skipping')
-      return
-    }
-    
-    if (candles.length === 0) {
-      console.log('[DATA EFFECT] No candles, skipping')
-      return
-    }
-
-    console.log('[DATA EFFECT] First candle:', candles[0])
-    console.log('[DATA EFFECT] Last candle:', candles[candles.length - 1])
-    console.log('[DATA EFFECT] initializedRef.current:', initializedRef.current)
+    if (!seriesRef.current) return
+    if (candles.length === 0) return
 
     if (!initializedRef.current) {
-      console.log('[DATA EFFECT] Setting initial data - candles count:', candles.length)
-      try {
-        seriesRef.current.setData(candles as CandlestickData<Time>[])
-        console.log('[DATA EFFECT] Successfully set initial data')
-        initializedRef.current = true
-      } catch (error) {
-        console.error('[DATA EFFECT] Error setting data:', error)
+      seriesRef.current.setData(candles as CandlestickData<Time>[])
+      initializedRef.current = true
+      
+      // Fit content on initial load
+      if (chartRef.current) {
+        chartRef.current.timeScale().fitContent()
       }
     } else {
-      console.log('[DATA EFFECT] Updating with new candle:', candles[candles.length - 1])
-      try {
-        seriesRef.current.update(
-          candles[candles.length - 1] as CandlestickData<Time>
-        )
-        console.log('[DATA EFFECT] Successfully updated data')
-      } catch (error) {
-        console.error('[DATA EFFECT] Error updating data:', error)
+      seriesRef.current.update(
+        candles[candles.length - 1] as CandlestickData<Time>
+      )
+      
+      // Fit content on every update to zoom out and show all candles
+      if (chartRef.current) {
+        chartRef.current.timeScale().fitContent()
       }
     }
 
-    // Update indicators
     if (candles.length >= 50) {
-      console.log('[DATA EFFECT] Updating indicators - candles >= 50')
       if (showIndicators.sma20) {
         const sma20 = calculateSMA(candles, 20)
-        console.log('[DATA EFFECT] SMA20 data points:', sma20.length)
         indicatorSeriesRef.current.sma20?.setData(sma20)
       }
       if (showIndicators.sma50) {
         const sma50 = calculateSMA(candles, 50)
-        console.log('[DATA EFFECT] SMA50 data points:', sma50.length)
         indicatorSeriesRef.current.sma50?.setData(sma50)
       }
       if (showIndicators.ema12) {
         const ema12 = calculateEMA(candles, 12)
-        console.log('[DATA EFFECT] EMA12 data points:', ema12.length)
         indicatorSeriesRef.current.ema12?.setData(ema12)
       }
       if (showIndicators.ema26) {
         const ema26 = calculateEMA(candles, 26)
-        console.log('[DATA EFFECT] EMA26 data points:', ema26.length)
         indicatorSeriesRef.current.ema26?.setData(ema26)
       }
       if (showIndicators.bollinger) {
         const bb = calculateBollingerBands(candles, 20, 2)
-        console.log('[DATA EFFECT] Bollinger Bands - upper:', bb.upper.length, 'middle:', bb.middle.length, 'lower:', bb.lower.length)
         indicatorSeriesRef.current.bbUpper?.setData(bb.upper)
         indicatorSeriesRef.current.bbMiddle?.setData(bb.middle)
         indicatorSeriesRef.current.bbLower?.setData(bb.lower)
-      }
-    } else {
-      console.log('[DATA EFFECT] Not enough candles for indicators - need 50, have:', candles.length)
-    }
-    
-    if (chartRef.current && candles.length > 0) {
-      console.log('[DATA EFFECT] Setting visible range - from:', candles[0].time, 'to:', candles[candles.length - 1].time)
-      try {
-        chartRef.current.timeScale().setVisibleRange({
-          from: candles[0].time as Time,
-          to: candles[candles.length - 1].time as Time,
-        })
-        console.log('[DATA EFFECT] Successfully set visible range')
-      } catch (error) {
-        console.error('[DATA EFFECT] Error setting visible range:', error)
       }
     }
   }, [candles, showIndicators])
@@ -564,117 +666,181 @@ export default function Dashboard() {
       height: "100vh", 
       display: "flex", 
       flexDirection: "column",
-      background: "#0a0e27",
-      color: "#d1d4dc",
-      overflow: "hidden"
+      background: "#000000",
+      color: "#E5E7EB",
+      overflow: "hidden",
+      fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif"
     }}>
       <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600&display=swap');
+        
+        * {
+          box-sizing: border-box;
         }
         
-        /* Hide TradingView watermarks and branding */
+        ::-webkit-scrollbar {
+          width: 6px;
+          height: 6px;
+        }
+        
+        ::-webkit-scrollbar-track {
+          background: #0A0A0A;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+          background: #2A2A2A;
+          border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+          background: #3A3A3A;
+        }
+        
         [class*="watermark"],
         [class*="attribution"],
         div[style*="pointer-events"][style*="absolute"]:has(a),
         a[href*="tradingview"] {
           display: none !important;
-          visibility: hidden !important;
-          opacity: 0 !important;
         }
       `}</style>
 
-      {/* Header */}
+      {/* Top Bar */}
       <div style={{ 
-        background: "#131722", 
-        borderBottom: "1px solid #2a2e45",
-        boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.3)"
+        background: "#0A0A0A",
+        borderBottom: "1px solid #1A1A1A"
       }}>
-        <div style={{ padding: "12px 24px" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "32px" }}>
-              {/* Logo/Brand */}
-              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <div style={{
-                  width: "32px",
-                  height: "32px",
-                  background: "linear-gradient(135deg, #3b82f6 0%, #9333ea 100%)",
-                  borderRadius: "8px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center"
-                }}>
-                  <span style={{ color: "white", fontWeight: "bold", fontSize: "18px" }}>M</span>
-                </div>
-                <span style={{ fontSize: "20px", fontWeight: 600, color: "white" }}>
-                  Market Replay
-                </span>
-              </div>
-
-              {/* Symbol Info */}
+        {/* Main Header */}
+        <div style={{ 
+          padding: "12px 24px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          borderBottom: "1px solid #1A1A1A"
+        }}>
+          {/* Left: Symbol and Price */}
+          <div style={{ display: "flex", alignItems: "center", gap: "32px" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
+              <span style={{ 
+                fontSize: "18px", 
+                fontWeight: 700, 
+                color: "#FFFFFF",
+                fontFamily: "'Roboto Mono', monospace"
+              }}>
+                {symbol || 'SELECT'}
+              </span>
               {stats && (
-                <div style={{ display: "flex", alignItems: "baseline", gap: "16px" }}>
-                  <span style={{ fontSize: "24px", fontWeight: "bold", color: "white" }}>
-                    {symbol}
-                  </span>
-                  <span style={{ fontSize: "24px", fontWeight: 600, color: "white" }}>
+                <>
+                  <span style={{ 
+                    fontSize: "24px", 
+                    fontWeight: 600, 
+                    color: "#FFFFFF",
+                    fontFamily: "'Roboto Mono', monospace"
+                  }}>
                     {stats.close.toFixed(2)}
                   </span>
                   <span style={{ 
-                    fontSize: "18px", 
-                    fontWeight: 500,
-                    color: stats.priceChange >= 0 ? '#26a69a' : '#ef5350',
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "4px"
+                    fontSize: "14px", 
+                    fontWeight: 600,
+                    color: stats.priceChange >= 0 ? '#00C853' : '#FF1744',
+                    fontFamily: "'Roboto Mono', monospace"
                   }}>
-                    {stats.priceChange >= 0 ? '▲' : '▼'}
-                    {Math.abs(stats.priceChange).toFixed(2)} ({priceChangePercent.toFixed(2)}%)
+                    {stats.priceChange >= 0 ? '▲' : '▼'} {Math.abs(stats.priceChange).toFixed(2)} ({priceChangePercent >= 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%)
                   </span>
-                </div>
+                </>
               )}
             </div>
 
-            {/* Connection Status */}
-            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            {/* Quick Stats */}
+            {stats && (
+              <div style={{ display: "flex", alignItems: "center", gap: "24px", fontSize: "11px", color: "#6B7280" }}>
+                <div>
+                  <span style={{ color: "#4A4A4A" }}>O</span> <span style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace" }}>{stats.open.toFixed(2)}</span>
+                </div>
+                <div>
+                  <span style={{ color: "#4A4A4A" }}>H</span> <span style={{ color: "#00C853", fontFamily: "'Roboto Mono', monospace" }}>{stats.high.toFixed(2)}</span>
+                </div>
+                <div>
+                  <span style={{ color: "#4A4A4A" }}>L</span> <span style={{ color: "#FF1744", fontFamily: "'Roboto Mono', monospace" }}>{stats.low.toFixed(2)}</span>
+                </div>
+                <div>
+                  <span style={{ color: "#4A4A4A" }}>VOL</span> <span style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace" }}>{(stats.volume / 1000000).toFixed(2)}M</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Right: Status and Actions */}
+          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+            {/* P&L */}
+            {openPositions.length > 0 && (
               <div style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
                 padding: "6px 12px",
-                borderRadius: "8px",
-                background: "#1e2235"
+                background: totalPnL >= 0 ? 'rgba(0, 200, 83, 0.1)' : 'rgba(255, 23, 68, 0.1)',
+                border: `1px solid ${totalPnL >= 0 ? '#00C853' : '#FF1744'}`,
+                borderRadius: "4px"
               }}>
-                <div style={{
-                  width: "8px",
-                  height: "8px",
-                  borderRadius: "50%",
-                  background: isConnected ? "#22c55e" : "#6b7280",
-                  animation: isConnected ? "pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite" : "none"
-                }} />
+                <span style={{ fontSize: "10px", color: "#6B7280", marginRight: "8px" }}>P&L</span>
                 <span style={{ 
-                  fontSize: "11px", 
-                  fontWeight: 500, 
-                  color: "#9ca3af",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em"
+                  fontSize: "13px", 
+                  fontWeight: 700,
+                  color: totalPnL >= 0 ? '#00C853' : '#FF1744',
+                  fontFamily: "'Roboto Mono', monospace"
                 }}>
-                  {isConnected ? 'Live' : 'Disconnected'}
+                  {totalPnL >= 0 ? '+' : ''}{totalPnL.toFixed(2)}
                 </span>
               </div>
-              
-              {candles.length > 0 && (
-                <div style={{
-                  fontSize: "11px",
-                  color: "#6b7280",
-                  padding: "6px 12px",
-                  background: "#1e2235",
-                  borderRadius: "8px"
-                }}>
-                  {candles.length} bars
-                </div>
-              )}
+            )}
+
+            {/* Trade Button */}
+            <button
+              onClick={() => setShowTradePanel(!showTradePanel)}
+              disabled={!isConnected || currentPrice === 0}
+              style={{
+                padding: "8px 20px",
+                background: isConnected && currentPrice > 0 ? "#2196F3" : "#1A1A1A",
+                border: "none",
+                borderRadius: "4px",
+                color: isConnected && currentPrice > 0 ? "#FFFFFF" : "#4A4A4A",
+                fontWeight: 700,
+                fontSize: "12px",
+                cursor: isConnected && currentPrice > 0 ? "pointer" : "not-allowed",
+                transition: "all 0.15s",
+                textTransform: "uppercase",
+                letterSpacing: "0.5px"
+              }}
+              onMouseEnter={(e) => {
+                if (isConnected && currentPrice > 0) {
+                  e.currentTarget.style.background = "#42A5F5"
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (isConnected && currentPrice > 0) {
+                  e.currentTarget.style.background = "#2196F3"
+                }
+              }}
+            >
+              Trade
+            </button>
+
+            {/* Connection Status */}
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 12px",
+              background: "#0A0A0A",
+              border: "1px solid #1A1A1A",
+              borderRadius: "4px"
+            }}>
+              <div style={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                background: isConnected ? "#00C853" : "#4A4A4A"
+              }} />
+              <span style={{ fontSize: "11px", color: "#6B7280", fontWeight: 600 }}>
+                {isConnected ? 'LIVE' : 'OFFLINE'}
+              </span>
             </div>
           </div>
         </div>
@@ -696,43 +862,30 @@ export default function Dashboard() {
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onReplay={!isConnected ? () => {
-            console.log('[REPLAY] ========================================')
-            console.log('[REPLAY] Replay button clicked - forcing reconnection')
-            console.log('[REPLAY] Current params - Symbol:', symbol, 'Start:', start, 'End:', end)
-            
-            // Step 1: Disable socket to disconnect
-            console.log('[REPLAY] Disabling socket')
             setSocketEnabled(false)
-            
-            // Step 2: Clear the local state
             initializedRef.current = false
             
             if (seriesRef.current) {
-              console.log('[REPLAY] Clearing series data')
               seriesRef.current.setData([])
             }
             
-            // Clear all indicator series  
-            console.log('[REPLAY] Clearing indicator series')
             Object.values(indicatorSeriesRef.current).forEach(series => {
               series.setData([])
             })
             
-            // Reset the store
-            console.log('[REPLAY] Calling reset()')
             reset()
-            
-            // Step 3: Set playing to true for auto-play when reconnected
-            console.log('[REPLAY] Setting playing to true for auto-play')
             setPlaying(true)
             
-            // Step 4: Re-enable socket after a brief delay to force reconnection
             setTimeout(() => {
-              console.log('[REPLAY] Re-enabling socket to reconnect')
               setSocketEnabled(true)
+              
+              if (chartRef.current && containerRef.current) {
+                chartRef.current.resize(
+                  containerRef.current.clientWidth,
+                  containerRef.current.clientHeight
+                )
+              }
             }, 100)
-            
-            console.log('[REPLAY] ========================================')
           } : undefined}
           isConnected={isConnected}
         />
@@ -740,193 +893,16 @@ export default function Dashboard() {
 
       {/* Main Content */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {/* Left Sidebar */}
-        <div style={{ 
-          width: "280px", 
-          background: "#131722", 
-          borderRight: "1px solid #2a2e45",
-          overflowY: "auto"
-        }}>
-          <div style={{ padding: "16px" }}>
-            {/* Timeframe Statistics */}
-            <div style={{ marginBottom: "16px" }}>
-              <h3 style={{ 
-                fontSize: "11px", 
-                fontWeight: 600, 
-                color: "#6b7280",
-                textTransform: "uppercase",
-                letterSpacing: "0.05em",
-                marginBottom: "12px"
-              }}>
-                Period Statistics
-              </h3>
-              {stats ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  <StatRow label="Period Open" value={stats.open.toFixed(2)} />
-                  <StatRow label="Current Close" value={stats.close.toFixed(2)} />
-                  <StatRow label="Period High" value={stats.high.toFixed(2)} color="#26a69a" />
-                  <StatRow label="Period Low" value={stats.low.toFixed(2)} color="#ef5350" />
-                  <StatRow label="Total Volume" value={stats.volume.toLocaleString()} />
-                  <StatRow 
-                    label="Net Change" 
-                    value={`${stats.priceChange >= 0 ? '+' : ''}${stats.priceChange.toFixed(2)}`}
-                    color={stats.priceChange >= 0 ? '#26a69a' : '#ef5350'}
-                  />
-                  <StatRow 
-                    label="% Change" 
-                    value={`${priceChangePercent >= 0 ? '+' : ''}${priceChangePercent.toFixed(2)}%`}
-                    color={priceChangePercent >= 0 ? '#26a69a' : '#ef5350'}
-                  />
-                </div>
-              ) : (
-                <div style={{ fontSize: "14px", color: "#6b7280" }}>No data available</div>
-              )}
-            </div>
-
-            {/* Technical Indicators */}
-            {metrics && (
-              <>
-                <div style={{ paddingTop: "16px", borderTop: "1px solid #2a2e45", marginBottom: "16px" }}>
-                  <h3 style={{ 
-                    fontSize: "11px", 
-                    fontWeight: 600, 
-                    color: "#6b7280",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    marginBottom: "12px"
-                  }}>
-                    Technical Indicators
-                  </h3>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                    <StatRow 
-                      label="RSI (14)" 
-                      value={metrics.rsi.toFixed(2)}
-                      color={metrics.rsi > 70 ? '#ef5350' : metrics.rsi < 30 ? '#26a69a' : 'white'}
-                    />
-                    <StatRow label="Volatility" value={`${metrics.volatility.toFixed(2)}%`} />
-                    <StatRow label="Avg True Range" value={metrics.atr.toFixed(2)} />
-                    <StatRow label="Avg Body Size" value={metrics.avgBodySize.toFixed(2)} />
-                  </div>
-                </div>
-
-                {/* Market Sentiment */}
-                <div style={{ paddingTop: "16px", borderTop: "1px solid #2a2e45", marginBottom: "16px" }}>
-                  <h3 style={{ 
-                    fontSize: "11px", 
-                    fontWeight: 600, 
-                    color: "#6b7280",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.05em",
-                    marginBottom: "12px"
-                  }}>
-                    Market Sentiment
-                  </h3>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                    <StatRow label="Bullish Candles" value={metrics.bullishCandles.toString()} color="#26a69a" />
-                    <StatRow label="Bearish Candles" value={metrics.bearishCandles.toString()} color="#ef5350" />
-                    <div style={{ marginTop: "8px" }}>
-                      <div style={{ fontSize: "12px", color: "#6b7280", marginBottom: "6px" }}>
-                        Bull/Bear Ratio
-                      </div>
-                      <div style={{ display: "flex", height: "24px", borderRadius: "4px", overflow: "hidden" }}>
-                        <div style={{ 
-                          width: `${(metrics.bullishCandles / (metrics.bullishCandles + metrics.bearishCandles)) * 100}%`,
-                          background: "#26a69a"
-                        }} />
-                        <div style={{ 
-                          flex: 1,
-                          background: "#ef5350"
-                        }} />
-                      </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: "4px", fontSize: "11px", color: "#9ca3af" }}>
-                        <span>{((metrics.bullishCandles / (metrics.bullishCandles + metrics.bearishCandles)) * 100).toFixed(1)}%</span>
-                        <span>{((metrics.bearishCandles / (metrics.bullishCandles + metrics.bearishCandles)) * 100).toFixed(1)}%</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* Indicator Toggles */}
-            <div style={{ paddingTop: "16px", borderTop: "1px solid #2a2e45" }}>
-              <h3 style={{ 
-                fontSize: "11px", 
-                fontWeight: 600, 
-                color: "#6b7280",
-                textTransform: "uppercase",
-                letterSpacing: "0.05em",
-                marginBottom: "12px"
-              }}>
-                Chart Indicators
-              </h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                <IndicatorToggle
-                  label="SMA 20"
-                  color="#2962FF"
-                  enabled={showIndicators.sma20}
-                  onChange={(v) => setShowIndicators(prev => ({ ...prev, sma20: v }))}
-                />
-                <IndicatorToggle
-                  label="SMA 50"
-                  color="#FF6D00"
-                  enabled={showIndicators.sma50}
-                  onChange={(v) => setShowIndicators(prev => ({ ...prev, sma50: v }))}
-                />
-                <IndicatorToggle
-                  label="EMA 12"
-                  color="#00E676"
-                  enabled={showIndicators.ema12}
-                  onChange={(v) => setShowIndicators(prev => ({ ...prev, ema12: v }))}
-                />
-                <IndicatorToggle
-                  label="EMA 26"
-                  color="#D500F9"
-                  enabled={showIndicators.ema26}
-                  onChange={(v) => setShowIndicators(prev => ({ ...prev, ema26: v }))}
-                />
-                <IndicatorToggle
-                  label="Bollinger Bands"
-                  color="#9C27B0"
-                  enabled={showIndicators.bollinger}
-                  onChange={(v) => setShowIndicators(prev => ({ ...prev, bollinger: v }))}
-                />
-              </div>
-            </div>
-
-            {/* Replay Info */}
-            <div style={{ paddingTop: "16px", borderTop: "1px solid #2a2e45", marginTop: "16px" }}>
-              <h3 style={{ 
-                fontSize: "11px", 
-                fontWeight: 600, 
-                color: "#6b7280",
-                textTransform: "uppercase",
-                letterSpacing: "0.05em",
-                marginBottom: "12px"
-              }}>
-                Replay Status
-              </h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontSize: "14px", color: "#9ca3af" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span>Speed:</span>
-                  <span style={{ color: "white" }}>{timeScale}ms</span>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span>Status:</span>
-                  <span style={{ color: playing ? '#22c55e' : '#eab308' }}>
-                    {playing ? 'Playing' : 'Paused'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Chart Container */}
-        <div style={{ flex: 1, position: "relative", background: "#0a0e27" }}>
-          <div ref={containerRef} style={{ position: "absolute", inset: 0 }} />
+        {/* Chart Area */}
+        <div style={{ flex: 1, position: "relative", background: "#000000" }}>
+          <div 
+            ref={containerRef} 
+            style={{ 
+              position: "absolute", 
+              inset: 0
+            }} 
+          />
           
-          {/* Watermark */}
           {!isConnected && candles.length === 0 && (
             <div style={{
               position: "absolute",
@@ -936,18 +912,14 @@ export default function Dashboard() {
               justifyContent: "center",
               pointerEvents: "none"
             }}>
-              <div style={{ textAlign: "center" }}>
-                <div style={{ fontSize: "64px", fontWeight: "bold", color: "#1a1e3a", marginBottom: "8px" }}>
-                  Market Replay
-                </div>
-                <div style={{ fontSize: "18px", color: "#6b7280" }}>
-                  Select parameters and click Play to start
+              <div style={{ textAlign: "center", opacity: 0.3 }}>
+                <div style={{ fontSize: "14px", color: "#4A4A4A", fontWeight: 500 }}>
+                  Configure parameters and start replay
                 </div>
               </div>
             </div>
           )}
           
-          {/* Replay Available Message */}
           {!isConnected && candles.length > 0 && (
             <div style={{
               position: "absolute",
@@ -959,61 +931,525 @@ export default function Dashboard() {
             }}>
               <div style={{ 
                 textAlign: "center",
-                background: "rgba(19, 23, 34, 0.95)",
-                padding: "32px 48px",
-                borderRadius: "16px",
-                border: "2px solid #6366f1",
-                boxShadow: "0 8px 32px rgba(99, 102, 241, 0.3)"
+                background: "#0A0A0A",
+                padding: "24px 40px",
+                borderRadius: "8px",
+                border: "1px solid #1A1A1A"
               }}>
-                <div style={{ fontSize: "48px", fontWeight: "bold", color: "#6366f1", marginBottom: "16px" }}>
+                <div style={{ fontSize: "18px", fontWeight: 600, color: "#FFFFFF", marginBottom: "8px" }}>
                   Replay Complete
                 </div>
-                <div style={{ fontSize: "18px", color: "#9ca3af", marginBottom: "8px" }}>
-                  Click the "↻ Replay" button to watch again
-                </div>
-                <div style={{ fontSize: "14px", color: "#6b7280" }}>
-                  You can also adjust parameters and start a new replay
+                <div style={{ fontSize: "12px", color: "#6B7280" }}>
+                  Click "↻ Replay" to watch again
                 </div>
               </div>
             </div>
           )}
         </div>
-      </div>
 
-      {/* Footer */}
-      <div style={{
-        background: "#131722",
-        borderTop: "1px solid #2a2e45",
-        padding: "8px 24px"
-      }}>
-        <div style={{
+        {/* Right Panel - Market Data & Positions */}
+        <div style={{ 
+          width: "320px", 
+          background: "#0A0A0A",
+          borderLeft: "1px solid #1A1A1A",
           display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          fontSize: "11px",
-          color: "#6b7280"
+          flexDirection: "column",
+          overflowY: "auto"
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
-            <span>© 2024 Market Replay</span>
-            <span>•</span>
-            <span>Historical Market Data Visualization Platform</span>
+          {/* Technical Indicators */}
+          {metrics && (
+            <div style={{ padding: "16px", borderBottom: "1px solid #1A1A1A" }}>
+              <div style={{ fontSize: "10px", fontWeight: 700, color: "#6B7280", marginBottom: "12px", letterSpacing: "0.5px" }}>
+                TECHNICALS
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                <MetricCard 
+                  label="RSI" 
+                  value={metrics.rsi.toFixed(1)}
+                  color={metrics.rsi > 70 ? '#FF1744' : metrics.rsi < 30 ? '#00C853' : '#6B7280'}
+                />
+                <MetricCard 
+                  label="Stoch RSI" 
+                  value={metrics.stochRSI.toFixed(1)}
+                  color={metrics.stochRSI > 80 ? '#FF1744' : metrics.stochRSI < 20 ? '#00C853' : '#6B7280'}
+                />
+                <MetricCard 
+                  label="ADX" 
+                  value={metrics.adx.toFixed(1)}
+                  color={metrics.adx > 25 ? '#00C853' : '#6B7280'}
+                />
+                <MetricCard 
+                  label="ATR" 
+                  value={metrics.atr.toFixed(2)}
+                />
+                <MetricCard 
+                  label="Volatility" 
+                  value={`${metrics.volatility.toFixed(2)}%`}
+                />
+                <MetricCard 
+                  label="VWAP" 
+                  value={metrics.vwap.toFixed(2)}
+                />
+                <MetricCard 
+                  label="OBV" 
+                  value={`${(metrics.obv / 1000000).toFixed(2)}M`}
+                />
+                <MetricCard 
+                  label="BARS" 
+                  value={candles.length.toString()}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Sentiment */}
+          {metrics && (
+            <div style={{ padding: "16px", borderBottom: "1px solid #1A1A1A" }}>
+              <div style={{ fontSize: "10px", fontWeight: 700, color: "#6B7280", marginBottom: "12px", letterSpacing: "0.5px" }}>
+                SENTIMENT
+              </div>
+              <div style={{ display: "flex", height: "20px", borderRadius: "2px", overflow: "hidden", marginBottom: "8px" }}>
+                <div style={{ 
+                  width: `${(metrics.bullishCandles / (metrics.bullishCandles + metrics.bearishCandles)) * 100}%`,
+                  background: "#00C853"
+                }} />
+                <div style={{ 
+                  flex: 1,
+                  background: "#FF1744"
+                }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", fontFamily: "'Roboto Mono', monospace" }}>
+                <span style={{ color: "#00C853" }}>BULL {metrics.bullishCandles}</span>
+                <span style={{ color: "#FF1744" }}>BEAR {metrics.bearishCandles}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Indicators Toggle */}
+          <div style={{ padding: "16px", borderBottom: "1px solid #1A1A1A" }}>
+            <div style={{ fontSize: "10px", fontWeight: 700, color: "#6B7280", marginBottom: "12px", letterSpacing: "0.5px" }}>
+              OVERLAYS
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <IndicatorToggle
+                label="SMA 20"
+                color="#2196F3"
+                enabled={showIndicators.sma20}
+                onChange={(v) => setShowIndicators(prev => ({ ...prev, sma20: v }))}
+              />
+              <IndicatorToggle
+                label="SMA 50"
+                color="#FF9800"
+                enabled={showIndicators.sma50}
+                onChange={(v) => setShowIndicators(prev => ({ ...prev, sma50: v }))}
+              />
+              <IndicatorToggle
+                label="EMA 12"
+                color="#00E676"
+                enabled={showIndicators.ema12}
+                onChange={(v) => setShowIndicators(prev => ({ ...prev, ema12: v }))}
+              />
+              <IndicatorToggle
+                label="EMA 26"
+                color="#FFC107"
+                enabled={showIndicators.ema26}
+                onChange={(v) => setShowIndicators(prev => ({ ...prev, ema26: v }))}
+              />
+              <IndicatorToggle
+                label="Bollinger"
+                color="#9C27B0"
+                enabled={showIndicators.bollinger}
+                onChange={(v) => setShowIndicators(prev => ({ ...prev, bollinger: v }))}
+              />
+            </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-            <span>Real-time WebSocket Streaming</span>
-            <span>•</span>
-            <span>Advanced Charting & Analytics</span>
+
+          {/* Positions */}
+          <div style={{ flex: 1, padding: "16px" }}>
+            <div style={{ 
+              fontSize: "10px", 
+              fontWeight: 700, 
+              color: "#6B7280", 
+              marginBottom: "12px", 
+              letterSpacing: "0.5px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center"
+            }}>
+              <span>POSITIONS</span>
+              {openPositions.length > 0 && (
+                <span style={{ 
+                  background: "#FF9800", 
+                  color: "#000000", 
+                  padding: "2px 6px", 
+                  borderRadius: "2px",
+                  fontSize: "9px",
+                  fontWeight: 700
+                }}>
+                  {openPositions.length}
+                </span>
+              )}
+            </div>
+
+            {openPositions.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {openPositions.map((pos) => {
+                  const pnl = pos.side === 'BUY' 
+                    ? (currentPrice - pos.entryPrice) * pos.quantity
+                    : (pos.entryPrice - currentPrice) * pos.quantity
+                  const pnlPercent = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100 * (pos.side === 'BUY' ? 1 : -1)
+                  
+                  return (
+                    <div
+                      key={pos.id}
+                      style={{
+                        padding: "10px",
+                        background: pnl >= 0 ? "rgba(0, 200, 83, 0.08)" : "rgba(255, 23, 68, 0.08)",
+                        border: `1px solid ${pnl >= 0 ? "rgba(0, 200, 83, 0.2)" : "rgba(255, 23, 68, 0.2)"}`,
+                        borderRadius: "4px",
+                        transition: "all 0.2s"
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = pnl >= 0 ? "rgba(0, 200, 83, 0.12)" : "rgba(255, 23, 68, 0.12)"
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = pnl >= 0 ? "rgba(0, 200, 83, 0.08)" : "rgba(255, 23, 68, 0.08)"
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                          <span style={{
+                            padding: "2px 6px",
+                            background: pos.side === 'BUY' ? 'rgba(0, 200, 83, 0.2)' : 'rgba(255, 23, 68, 0.2)',
+                            color: pos.side === 'BUY' ? '#00C853' : '#FF1744',
+                            borderRadius: "2px",
+                            fontSize: "9px",
+                            fontWeight: 700
+                          }}>
+                            {pos.side}
+                          </span>
+                          <span style={{ fontSize: "12px", fontWeight: 600, color: "#FFFFFF" }}>
+                            x{pos.quantity}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => closePosition(pos.id)}
+                          style={{
+                            padding: "2px 8px",
+                            background: "none",
+                            border: "1px solid #2A2A2A",
+                            borderRadius: "2px",
+                            color: "#6B7280",
+                            fontSize: "9px",
+                            fontWeight: 700,
+                            cursor: "pointer",
+                            transition: "all 0.15s"
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = "#4A4A4A"
+                            e.currentTarget.style.color = "#A0A0A0"
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = "#2A2A2A"
+                            e.currentTarget.style.color = "#6B7280"
+                          }}
+                        >
+                          CLOSE
+                        </button>
+                      </div>
+                      
+                      <div style={{ 
+                        display: "grid", 
+                        gridTemplateColumns: "1fr 1fr", 
+                        gap: "8px",
+                        fontSize: "10px"
+                      }}>
+                        <div>
+                          <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Entry</div>
+                          <div style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace", fontWeight: 500 }}>
+                            {pos.entryPrice.toFixed(2)}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Current</div>
+                          <div style={{ color: "#A0A0A0", fontFamily: "'Roboto Mono', monospace", fontWeight: 500 }}>
+                            {currentPrice.toFixed(2)}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>P&L</div>
+                          <div style={{ 
+                            color: pnl >= 0 ? '#00C853' : '#FF1744', 
+                            fontFamily: "'Roboto Mono', monospace",
+                            fontWeight: 600
+                          }}>
+                            {pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ color: "#4A4A4A", marginBottom: "2px" }}>Return</div>
+                          <div style={{ 
+                            color: pnlPercent >= 0 ? '#00C853' : '#FF1744', 
+                            fontFamily: "'Roboto Mono', monospace",
+                            fontWeight: 600
+                          }}>
+                            {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div style={{
+                textAlign: "center",
+                padding: "40px 20px",
+                color: "#4A4A4A",
+                fontSize: "11px"
+              }}>
+                No open positions
+              </div>
+            )}
+
+            {/* Closed Positions Summary */}
+            {closedPositions.length > 0 && (
+              <div style={{ 
+                marginTop: "16px", 
+                padding: "10px", 
+                background: "rgba(26, 26, 26, 0.5)", 
+                border: "1px solid #1A1A1A", 
+                borderRadius: "4px" 
+              }}>
+                <div style={{ fontSize: "10px", color: "#4A4A4A", marginBottom: "6px" }}>
+                  REALIZED P&L
+                </div>
+                <div style={{ 
+                  fontSize: "16px", 
+                  fontWeight: 700,
+                  color: realizedPnL >= 0 ? '#00C853' : '#FF1744',
+                  fontFamily: "'Roboto Mono', monospace"
+                }}>
+                  {realizedPnL >= 0 ? '+' : ''}{realizedPnL.toFixed(2)}
+                </div>
+                <div style={{ fontSize: "10px", color: "#6B7280", marginTop: "4px" }}>
+                  {closedPositions.length} closed trade{closedPositions.length > 1 ? 's' : ''}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Trading Panel (Popup) */}
+      {showTradePanel && (
+        <div 
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.8)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000
+          }}
+          onClick={() => setShowTradePanel(false)}
+        >
+          <div 
+            style={{
+              background: "#0A0A0A",
+              border: "1px solid #2A2A2A",
+              borderRadius: "8px",
+              padding: "24px",
+              width: "400px",
+              maxWidth: "90vw"
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
+              <h3 style={{ fontSize: "14px", fontWeight: 700, color: "#FFFFFF", margin: 0 }}>
+                NEW ORDER
+              </h3>
+              <button
+                onClick={() => setShowTradePanel(false)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#6B7280",
+                  fontSize: "18px",
+                  cursor: "pointer",
+                  padding: 0,
+                  lineHeight: 1
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Current Price */}
+            <div style={{
+              padding: "12px",
+              background: "#000000",
+              border: "1px solid #1A1A1A",
+              borderRadius: "4px",
+              marginBottom: "20px"
+            }}>
+              <div style={{ fontSize: "10px", color: "#6B7280", marginBottom: "4px" }}>
+                LAST PRICE
+              </div>
+              <div style={{ 
+                fontSize: "20px", 
+                fontWeight: 700, 
+                color: "#FFFFFF",
+                fontFamily: "'Roboto Mono', monospace"
+              }}>
+                {currentPrice.toFixed(2)}
+              </div>
+            </div>
+
+            {/* Order Type */}
+            <div style={{ marginBottom: "16px" }}>
+              <div style={{ fontSize: "10px", color: "#6B7280", marginBottom: "8px", fontWeight: 700, letterSpacing: "0.5px" }}>
+                ORDER TYPE
+              </div>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  onClick={() => setOrderType('MARKET')}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    background: orderType === 'MARKET' ? '#1A1A1A' : '#000000',
+                    border: orderType === 'MARKET' ? '1px solid #4A4A4A' : '1px solid #1A1A1A',
+                    borderRadius: "4px",
+                    color: orderType === 'MARKET' ? '#FFFFFF' : '#6B7280',
+                    fontWeight: 600,
+                    fontSize: "11px",
+                    cursor: "pointer"
+                  }}
+                >
+                  MARKET
+                </button>
+                <button
+                  onClick={() => setOrderType('LIMIT')}
+                  style={{
+                    flex: 1,
+                    padding: "10px",
+                    background: orderType === 'LIMIT' ? '#1A1A1A' : '#000000',
+                    border: orderType === 'LIMIT' ? '1px solid #4A4A4A' : '1px solid #1A1A1A',
+                    borderRadius: "4px",
+                    color: orderType === 'LIMIT' ? '#FFFFFF' : '#6B7280',
+                    fontWeight: 600,
+                    fontSize: "11px",
+                    cursor: "pointer"
+                  }}
+                >
+                  LIMIT
+                </button>
+              </div>
+            </div>
+
+            {/* Limit Price */}
+            {orderType === 'LIMIT' && (
+              <div style={{ marginBottom: "16px" }}>
+                <div style={{ fontSize: "10px", color: "#6B7280", marginBottom: "8px", fontWeight: 700, letterSpacing: "0.5px" }}>
+                  LIMIT PRICE
+                </div>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={limitPrice}
+                  onChange={(e) => setLimitPrice(e.target.value)}
+                  placeholder="Enter price"
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    background: "#000000",
+                    border: "1px solid #1A1A1A",
+                    borderRadius: "4px",
+                    color: "#FFFFFF",
+                    fontSize: "13px",
+                    fontWeight: 500,
+                    fontFamily: "'Roboto Mono', monospace",
+                    outline: "none"
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Quantity */}
+            <div style={{ marginBottom: "20px" }}>
+              <div style={{ fontSize: "10px", color: "#6B7280", marginBottom: "8px", fontWeight: 700, letterSpacing: "0.5px" }}>
+                QUANTITY
+              </div>
+              <input
+                type="number"
+                min="1"
+                value={orderQuantity}
+                onChange={(e) => setOrderQuantity(Number(e.target.value))}
+                style={{
+                  width: "100%",
+                  padding: "10px 12px",
+                  background: "#000000",
+                  border: "1px solid #1A1A1A",
+                  borderRadius: "4px",
+                  color: "#FFFFFF",
+                  fontSize: "13px",
+                  fontWeight: 500,
+                  fontFamily: "'Roboto Mono', monospace",
+                  outline: "none"
+                }}
+              />
+            </div>
+
+            {/* Action Buttons */}
+            <div style={{ display: "flex", gap: "12px" }}>
+              <button
+                onClick={() => executeTrade('BUY')}
+                style={{
+                  flex: 1,
+                  padding: "14px",
+                  background: "#00C853",
+                  border: "none",
+                  borderRadius: "4px",
+                  color: "#000000",
+                  fontWeight: 700,
+                  fontSize: "13px",
+                  cursor: "pointer",
+                  letterSpacing: "0.5px"
+                }}
+              >
+                BUY
+              </button>
+              <button
+                onClick={() => executeTrade('SELL')}
+                style={{
+                  flex: 1,
+                  padding: "14px",
+                  background: "#FF1744",
+                  border: "none",
+                  borderRadius: "4px",
+                  color: "#FFFFFF",
+                  fontWeight: 700,
+                  fontSize: "13px",
+                  cursor: "pointer",
+                  letterSpacing: "0.5px"
+                }}
+              >
+                SELL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 // Helper Components
-function StatRow({ 
+function MetricCard({ 
   label, 
   value, 
-  color = "white" 
+  color = "#A0A0A0" 
 }: { 
   label: string
   value: string
@@ -1021,18 +1457,17 @@ function StatRow({
 }) {
   return (
     <div style={{
-      display: "flex",
-      justifyContent: "space-between",
-      alignItems: "center",
-      padding: "6px 8px",
-      borderRadius: "4px",
-      transition: "background 0.2s"
-    }}
-    onMouseEnter={(e) => e.currentTarget.style.background = "#1e2235"}
-    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-    >
-      <span style={{ fontSize: "12px", color: "#6b7280", fontWeight: 500 }}>{label}</span>
-      <span style={{ fontSize: "14px", fontWeight: 600, color }}>{value}</span>
+      padding: "8px",
+      background: "#000000",
+      border: "1px solid #1A1A1A",
+      borderRadius: "4px"
+    }}>
+      <div style={{ fontSize: "9px", color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: "14px", fontWeight: 600, color, fontFamily: "'Roboto Mono', monospace" }}>
+        {value}
+      </div>
     </div>
   )
 }
@@ -1054,36 +1489,33 @@ function IndicatorToggle({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: "8px",
+        justifyContent: "space-between",
         padding: "8px",
-        borderRadius: "6px",
+        borderRadius: "4px",
         cursor: "pointer",
-        background: enabled ? "#1e2235" : "transparent",
-        border: `1px solid ${enabled ? color : "#2a2e45"}`,
-        transition: "all 0.2s"
+        background: enabled ? '#000000' : 'transparent',
+        border: `1px solid ${enabled ? '#1A1A1A' : 'transparent'}`,
+        transition: "all 0.15s"
       }}
     >
-      <div style={{
-        width: "16px",
-        height: "16px",
-        borderRadius: "4px",
-        background: enabled ? color : "transparent",
-        border: `2px solid ${color}`,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center"
-      }}>
-        {enabled && <span style={{ color: "white", fontSize: "10px" }}>✓</span>}
+      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        <div style={{
+          width: "12px",
+          height: "12px",
+          borderRadius: "2px",
+          background: enabled ? color : 'transparent',
+          border: `2px solid ${color}`,
+          transition: "all 0.15s"
+        }} />
+        <span style={{ fontSize: "11px", color: enabled ? "#FFFFFF" : "#6B7280", fontWeight: 500 }}>
+          {label}
+        </span>
       </div>
-      <span style={{ fontSize: "13px", color: enabled ? "white" : "#9ca3af", fontWeight: 500 }}>
-        {label}
-      </span>
       <div style={{
-        marginLeft: "auto",
-        width: "24px",
+        width: "20px",
         height: "2px",
         background: color,
-        borderRadius: "1px"
+        opacity: enabled ? 1 : 0.3
       }} />
     </div>
   )

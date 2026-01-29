@@ -18,21 +18,23 @@ type Props = {
 }
 
 const inputStyle = {
-  background: "#1e2235",
-  color: "white",
-  padding: "8px 12px",
-  borderRadius: "8px",
-  border: "1px solid #2a2e45",
-  fontSize: "14px",
-  outline: "none"
+  background: "#000000",
+  color: "#E5E7EB",
+  padding: "6px 10px",
+  borderRadius: "3px",
+  border: "1px solid #1A1A1A",
+  fontSize: "11px",
+  outline: "none",
+  fontWeight: 500 as const,
+  fontFamily: "'Inter', sans-serif"
 }
 
 const labelStyle = {
-  fontSize: "10px",
-  fontWeight: 600,
-  color: "#6b7280",
+  fontSize: "9px",
+  fontWeight: 600 as const,
+  color: "#6B7280",
   textTransform: "uppercase" as const,
-  letterSpacing: "0.05em",
+  letterSpacing: "0.5px",
   marginBottom: "4px"
 }
 
@@ -56,192 +58,200 @@ export function TopBar({
 }: Props) {
   return (
     <div style={{
-      background: "#0f1320",
-      borderTop: "1px solid #2a2e45",
-      padding: "12px 24px"
+      background: "#0A0A0A",
+      padding: "10px 24px",
+      display: "flex",
+      alignItems: "center",
+      gap: "16px"
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-        {/* Symbol Selector */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-          <label style={labelStyle}>Symbol</label>
-          <select 
-            value={symbol} 
-            onChange={(e) => setSymbol(e.target.value)}
-            style={{ ...inputStyle, minWidth: "120px", fontWeight: 500 }}
+      {/* Symbol Selector */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <label style={labelStyle}>Symbol</label>
+        <select 
+          value={symbol} 
+          onChange={(e) => setSymbol(e.target.value)}
+          style={{ 
+            ...inputStyle, 
+            minWidth: "110px",
+            cursor: "pointer"
+          }}
+        >
+          {symbols.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ width: "1px", height: "36px", background: "#1A1A1A" }} />
+
+      {/* Date Range */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <label style={labelStyle}>Start</label>
+        <input 
+          type="datetime-local" 
+          value={start} 
+          onChange={(e) => setStart(e.target.value)}
+          style={inputStyle}
+        />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <label style={labelStyle}>End</label>
+        <input 
+          type="datetime-local" 
+          value={end} 
+          onChange={(e) => setEnd(e.target.value)}
+          style={inputStyle}
+        />
+      </div>
+
+      <div style={{ width: "1px", height: "36px", background: "#1A1A1A" }} />
+
+      {/* Time Controls */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <label style={labelStyle}>Speed (ms)</label>
+        <input
+          type="number"
+          value={timeScale}
+          onChange={(e) => setTimeScale(Number(e.target.value))}
+          style={{ ...inputStyle, width: "90px" }}
+        />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <label style={labelStyle}>Gap</label>
+        <select
+          value={gapScale}
+          onChange={(e) => setGapScale(Number(e.target.value))}
+          style={{ ...inputStyle, cursor: "pointer", width: "90px" }}
+        >
+          <option value={1000}>Slow</option>
+          <option value={10000}>Med</option>
+          <option value={100000}>Fast</option>
+          <option value={1000000}>Instant</option>
+        </select>
+      </div>
+
+      <div style={{ flex: 1 }} />
+
+      {/* Playback Controls */}
+      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+        {/* Replay Button */}
+        {!isConnected && onReplay && (
+          <button 
+            onClick={onReplay}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 16px",
+              borderRadius: "4px",
+              fontWeight: 700,
+              fontSize: "11px",
+              border: "none",
+              cursor: "pointer",
+              background: "#2196F3",
+              color: "#FFFFFF",
+              transition: "all 0.15s",
+              letterSpacing: "0.5px"
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "#42A5F5"
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "#2196F3"
+            }}
           >
-            {symbols.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </div>
+            <span style={{ fontSize: "14px" }}>↻</span>
+            REPLAY
+          </button>
+        )}
 
-        <div style={{ width: "1px", height: "40px", background: "#2a2e45" }} />
-
-        {/* Date Range */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-          <label style={labelStyle}>Start Date</label>
-          <input 
-            type="datetime-local" 
-            value={start} 
-            onChange={(e) => setStart(e.target.value)}
-            style={inputStyle}
-          />
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-          <label style={labelStyle}>End Date</label>
-          <input 
-            type="datetime-local" 
-            value={end} 
-            onChange={(e) => setEnd(e.target.value)}
-            style={inputStyle}
-          />
-        </div>
-
-        <div style={{ width: "1px", height: "40px", background: "#2a2e45" }} />
-
-        {/* Time Controls */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-          <label style={labelStyle}>Speed (ms)</label>
-          <input
-            type="number"
-            value={timeScale}
-            onChange={(e) => setTimeScale(Number(e.target.value))}
-            style={{ ...inputStyle, width: "96px" }}
-          />
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-          <label style={labelStyle}>Gap Speed</label>
-          <select
-            value={gapScale}
-            onChange={(e) => setGapScale(Number(e.target.value))}
-            style={{ ...inputStyle, fontWeight: 500 }}
-          >
-            <option value={1000}>Slow</option>
-            <option value={10000}>Medium</option>
-            <option value={100000}>Fast</option>
-            <option value={1000000}>Instant</option>
-          </select>
-        </div>
-
-        <div style={{ flex: 1 }} />
-
-        {/* Playback Controls */}
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          {/* Replay Button - Only show when disconnected (replay finished) */}
-          {!isConnected && onReplay && (
-            <button 
-              onClick={onReplay}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "8px",
-                padding: "8px 16px",
-                borderRadius: "8px",
-                fontWeight: 500,
-                fontSize: "14px",
-                border: "none",
-                cursor: "pointer",
-                background: "#6366f1",
-                color: "white",
-                boxShadow: "0 4px 6px -1px rgba(99, 102, 241, 0.3)",
-                transition: "all 0.2s"
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "#4f46e5"
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "#6366f1"
-              }}
-            >
-              ↻ Replay
-            </button>
-          )}
-
-          {/* Play/Pause Button - Only show when connected */}
-          {isConnected && (
-            !playing ? (
-              <button 
-                onClick={onPlay}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  padding: "8px 20px",
-                  borderRadius: "8px",
-                  fontWeight: 500,
-                  fontSize: "14px",
-                  border: "none",
-                  cursor: "pointer",
-                  background: "#16a34a",
-                  color: "white",
-                  boxShadow: "0 4px 6px -1px rgba(22, 163, 74, 0.3)",
-                  transition: "all 0.2s"
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "#15803d"
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "#16a34a"
-                }}
-              >
-                ▶ Play
-              </button>
-            ) : (
-              <button 
-                onClick={onPause}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  padding: "8px 20px",
-                  borderRadius: "8px",
-                  fontWeight: 500,
-                  fontSize: "14px",
-                  border: "none",
-                  cursor: "pointer",
-                  background: "#ca8a04",
-                  color: "white",
-                  boxShadow: "0 4px 6px -1px rgba(202, 138, 4, 0.3)",
-                  transition: "all 0.2s"
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "#a16207"
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "#ca8a04"
-                }}
-              >
-                ⏸ Pause
-              </button>
-            )
-          )}
-
-          {/* Initial Play Button - Show when not connected and no replay */}
-          {!isConnected && !onReplay && (
+        {/* Play/Pause Button */}
+        {isConnected && (
+          !playing ? (
             <button 
               onClick={onPlay}
-              disabled={true}
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: "8px",
-                padding: "8px 20px",
-                borderRadius: "8px",
-                fontWeight: 500,
-                fontSize: "14px",
+                gap: "6px",
+                padding: "8px 16px",
+                borderRadius: "4px",
+                fontWeight: 700,
+                fontSize: "11px",
                 border: "none",
-                cursor: "not-allowed",
-                background: "#2a2e45",
-                color: "#6b7280",
-                transition: "all 0.2s"
+                cursor: "pointer",
+                background: "#00C853",
+                color: "#000000",
+                transition: "all 0.15s",
+                letterSpacing: "0.5px"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "#00E676"
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "#00C853"
               }}
             >
-              ▶ Play
+              <span style={{ fontSize: "12px" }}>▶</span>
+              PLAY
             </button>
-          )}
-        </div>
+          ) : (
+            <button 
+              onClick={onPause}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "8px 16px",
+                borderRadius: "4px",
+                fontWeight: 700,
+                fontSize: "11px",
+                border: "none",
+                cursor: "pointer",
+                background: "#FF9800",
+                color: "#000000",
+                transition: "all 0.15s",
+                letterSpacing: "0.5px"
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "#FFB74D"
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "#FF9800"
+              }}
+            >
+              <span style={{ fontSize: "12px" }}>⏸</span>
+              PAUSE
+            </button>
+          )
+        )}
+
+        {/* Initial Play Button (Disabled) */}
+        {!isConnected && !onReplay && (
+          <button 
+            onClick={onPlay}
+            disabled={true}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              padding: "8px 16px",
+              borderRadius: "4px",
+              fontWeight: 700,
+              fontSize: "11px",
+              border: "none",
+              cursor: "not-allowed",
+              background: "#1A1A1A",
+              color: "#4A4A4A",
+              letterSpacing: "0.5px"
+            }}
+          >
+            <span style={{ fontSize: "12px" }}>▶</span>
+            PLAY
+          </button>
+        )}
       </div>
     </div>
   )
