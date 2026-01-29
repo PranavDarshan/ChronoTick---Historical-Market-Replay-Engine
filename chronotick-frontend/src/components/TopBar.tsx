@@ -162,7 +162,19 @@ export function TopBar({
               e.currentTarget.style.background = "#2196F3"
             }}
           >
-            <span style={{ fontSize: "14px" }}>↻</span>
+            <svg 
+              style={{ width: "12px", height: "12px" }}
+              fill="none" 
+              stroke="currentColor" 
+              viewBox="0 0 24 24"
+            >
+              <path 
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
+                strokeWidth="2.5" 
+                strokeLinecap="round" 
+                strokeLinejoin="round"
+              />
+            </svg>
             REPLAY
           </button>
         )}
@@ -194,7 +206,13 @@ export function TopBar({
                 e.currentTarget.style.background = "#00C853"
               }}
             >
-              <span style={{ fontSize: "12px" }}>▶</span>
+              <svg 
+                style={{ width: "10px", height: "10px" }}
+                fill="currentColor" 
+                viewBox="0 0 24 24"
+              >
+                <path d="M8 5v14l11-7z"/>
+              </svg>
               PLAY
             </button>
           ) : (
@@ -222,7 +240,13 @@ export function TopBar({
                 e.currentTarget.style.background = "#FF9800"
               }}
             >
-              <span style={{ fontSize: "12px" }}>⏸</span>
+              <svg 
+                style={{ width: "10px", height: "10px" }}
+                fill="currentColor" 
+                viewBox="0 0 24 24"
+              >
+                <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+              </svg>
               PAUSE
             </button>
           )
@@ -248,7 +272,13 @@ export function TopBar({
               letterSpacing: "0.5px"
             }}
           >
-            <span style={{ fontSize: "12px" }}>▶</span>
+            <svg 
+              style={{ width: "10px", height: "10px" }}
+              fill="currentColor" 
+              viewBox="0 0 24 24"
+            >
+              <path d="M8 5v14l11-7z"/>
+            </svg>
             PLAY
           </button>
         )}

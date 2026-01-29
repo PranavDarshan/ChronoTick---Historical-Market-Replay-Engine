@@ -228,6 +228,7 @@ type Position = {
   status: 'OPEN' | 'CLOSED'
   exitPrice?: number
   exitTimestamp?: number
+  stopLossPrice?: number // Stop loss for this position
 }
 
 type Order = {
@@ -237,6 +238,7 @@ type Order = {
   quantity: number
   orderType: 'MARKET' | 'LIMIT'
   limitPrice?: number
+  stopLossPrice?: number // Optional stop loss for when order fills
   timestamp: number
   status: 'PENDING' | 'FILLED' | 'CANCELLED'
 }
@@ -263,6 +265,7 @@ export default function Dashboard() {
   const [orderQuantity, setOrderQuantity] = useState(1)
   const [orderType, setOrderType] = useState<'MARKET' | 'LIMIT'>('MARKET')
   const [limitPrice, setLimitPrice] = useState<string>('')
+  const [stopLossPrice, setStopLossPrice] = useState<string>('')
   const [positions, setPositions] = useState<Position[]>([])
   const [orders, setOrders] = useState<Order[]>([])
   const [activeTab, setActiveTab] = useState<'positions' | 'orders'>('positions')
@@ -280,9 +283,9 @@ export default function Dashboard() {
 
   const currentPrice = candles.length > 0 ? candles[candles.length - 1].close : 0
 
-  // Filter symbols based on search
+  // Filter symbols based on search - FIXED to be case-insensitive and trim whitespace
   const filteredSymbols = symbols.filter(s => 
-    s.toLowerCase().includes(searchQuery.toLowerCase())
+    s.toLowerCase().trim().includes(searchQuery.toLowerCase().trim())
   )
 
   // Calculate timeframe statistics
@@ -341,6 +344,34 @@ export default function Dashboard() {
   const executeTrade = (side: 'BUY' | 'SELL') => {
     if (orderQuantity <= 0 || currentPrice === 0) return
 
+    // Validate stop loss if provided
+    let validatedStopLoss: number | undefined = undefined
+    if (stopLossPrice && stopLossPrice.trim() !== '') {
+      const slPrice = parseFloat(stopLossPrice)
+      
+      if (isNaN(slPrice) || slPrice <= 0) {
+        alert('Please enter a valid stop loss price')
+        return
+      }
+
+      // Validate stop loss direction
+      if (side === 'BUY') {
+        // For BUY positions, stop loss must be BELOW entry price
+        if (slPrice >= currentPrice) {
+          alert(`Stop loss for BUY must be below entry price (current: ${currentPrice.toFixed(2)})`)
+          return
+        }
+      } else {
+        // For SELL positions, stop loss must be ABOVE entry price
+        if (slPrice <= currentPrice) {
+          alert(`Stop loss for SELL must be above entry price (current: ${currentPrice.toFixed(2)})`)
+          return
+        }
+      }
+      
+      validatedStopLoss = slPrice
+    }
+
     if (orderType === 'LIMIT') {
       const price = parseFloat(limitPrice)
       
@@ -349,31 +380,25 @@ export default function Dashboard() {
         return
       }
 
-      // Real trading platform rules:
-      // - Buy limit: must be at or below market price (you want to buy cheaper)
-      // - Sell limit: must be at or above market price (you want to sell higher)
-      // If set "wrong", they execute immediately like market orders
-      
       const shouldExecuteImmediately = 
         (side === 'BUY' && price >= currentPrice) || 
         (side === 'SELL' && price <= currentPrice)
 
       if (shouldExecuteImmediately) {
-        // Execute immediately as a market order would
         const newPosition: Position = {
           id: `${Date.now()}-${Math.random()}`,
           symbol,
           side,
           quantity: orderQuantity,
-          entryPrice: currentPrice, // Fill at market price, not limit price
+          entryPrice: currentPrice,
           currentPrice: currentPrice,
           timestamp: Date.now(),
-          status: 'OPEN'
+          status: 'OPEN',
+          stopLossPrice: validatedStopLoss
         }
 
         setPositions(prev => [...prev, newPosition])
         
-        // Also create a filled order record
         const filledOrder: Order = {
           id: `${Date.now()}-${Math.random()}`,
           symbol,
@@ -386,7 +411,6 @@ export default function Dashboard() {
         }
         setOrders(prev => [...prev, filledOrder])
       } else {
-        // Create pending limit order (waits for price to reach limit)
         const newOrder: Order = {
           id: `${Date.now()}-${Math.random()}`,
           symbol,
@@ -394,6 +418,7 @@ export default function Dashboard() {
           quantity: orderQuantity,
           orderType: 'LIMIT',
           limitPrice: price,
+          stopLossPrice: validatedStopLoss,
           timestamp: Date.now(),
           status: 'PENDING'
         }
@@ -402,6 +427,7 @@ export default function Dashboard() {
       }
       
       setShowTradePanel(false)
+      setStopLossPrice('') // Reset
       
     } else {
       // Market order - execute immediately
@@ -413,11 +439,13 @@ export default function Dashboard() {
         entryPrice: currentPrice,
         currentPrice: currentPrice,
         timestamp: Date.now(),
-        status: 'OPEN'
+        status: 'OPEN',
+        stopLossPrice: validatedStopLoss
       }
 
       setPositions(prev => [...prev, newPosition])
       setShowTradePanel(false)
+      setStopLossPrice('') // Reset
     }
   }
 
@@ -446,50 +474,75 @@ export default function Dashboard() {
     }))
   }
 
-  // Check and execute limit orders when price changes
+  // Check stop loss on positions and execute limit orders when price changes
   useEffect(() => {
     if (currentPrice === 0) return
     
-    // Update current prices for open positions
+    // Update current prices for open positions and check stop losses
     setPositions(prev => prev.map(pos => {
       if (pos.status === 'OPEN') {
-        return { ...pos, currentPrice }
+        const updatedPos = { ...pos, currentPrice }
+        
+        // Check if stop loss is hit
+        if (pos.stopLossPrice) {
+          let stopLossHit = false
+          
+          if (pos.side === 'BUY') {
+            // For BUY positions, stop loss triggers when price falls to or below stop loss
+            stopLossHit = currentPrice <= pos.stopLossPrice
+          } else {
+            // For SELL positions, stop loss triggers when price rises to or above stop loss
+            stopLossHit = currentPrice >= pos.stopLossPrice
+          }
+          
+          if (stopLossHit) {
+            console.log(`Stop loss triggered for ${pos.side} position at ${currentPrice}`)
+            return {
+              ...updatedPos,
+              status: 'CLOSED' as const,
+              exitPrice: currentPrice,
+              exitTimestamp: Date.now()
+            }
+          }
+        }
+        
+        return updatedPos
       }
       return pos
     }))
 
     // Check pending limit orders
     setOrders(prev => prev.map(order => {
-      if (order.status !== 'PENDING' || !order.limitPrice) return order
+      if (order.status !== 'PENDING') return order
 
       let shouldExecute = false
 
-      // Check if limit order should be executed
-      if (order.side === 'BUY') {
-        // Buy limit executes when market price falls to or below limit price
-        shouldExecute = currentPrice <= order.limitPrice
-      } else {
-        // Sell limit executes when market price rises to or above limit price
-        shouldExecute = currentPrice >= order.limitPrice
-      }
-
-      if (shouldExecute) {
-        // Execute the order by creating a position
-        const newPosition: Position = {
-          id: `${Date.now()}-${Math.random()}`,
-          symbol: order.symbol,
-          side: order.side,
-          quantity: order.quantity,
-          entryPrice: order.limitPrice,
-          currentPrice: currentPrice,
-          timestamp: Date.now(),
-          status: 'OPEN'
+      // Handle LIMIT orders
+      if (order.orderType === 'LIMIT' && order.limitPrice) {
+        if (order.side === 'BUY') {
+          // Buy limit executes when market price falls to or below limit price
+          shouldExecute = currentPrice <= order.limitPrice
+        } else {
+          // Sell limit executes when market price rises to or above limit price
+          shouldExecute = currentPrice >= order.limitPrice
         }
 
-        setPositions(prev => [...prev, newPosition])
+        if (shouldExecute) {
+          const newPosition: Position = {
+            id: `${Date.now()}-${Math.random()}`,
+            symbol: order.symbol,
+            side: order.side,
+            quantity: order.quantity,
+            entryPrice: order.limitPrice,
+            currentPrice: currentPrice,
+            timestamp: Date.now(),
+            status: 'OPEN',
+            stopLossPrice: order.stopLossPrice // Carry over stop loss from order
+          }
 
-        // Mark order as filled
-        return { ...order, status: 'FILLED' as const }
+          setPositions(prev => [...prev, newPosition])
+          return { ...order, status: 'FILLED' as const }
+        }
       }
 
       return order
@@ -548,7 +601,6 @@ export default function Dashboard() {
   useEffect(() => {
     fetchSymbols()
 
-    // Auto-refresh every 10 minutes
     const intervalId = setInterval(() => {
       fetchSymbols()
     }, 10 * 60 * 1000)
@@ -752,7 +804,6 @@ export default function Dashboard() {
       seriesRef.current.setData(candles as CandlestickData<Time>[])
       initializedRef.current = true
       
-      // Fit content on initial load
       if (chartRef.current) {
         chartRef.current.timeScale().fitContent()
       }
@@ -761,7 +812,6 @@ export default function Dashboard() {
         candles[candles.length - 1] as CandlestickData<Time>
       )
       
-      // Fit content on every update to zoom out and show all candles
       if (chartRef.current) {
         chartRef.current.timeScale().fitContent()
       }
@@ -905,22 +955,29 @@ export default function Dashboard() {
                 transition: "all 0.2s"
               }}
               onFocus={(e) => {
-                e.currentTarget.style.borderColor = "#2196F3"
+                e.currentTarget.style.borderColor = "#3A3A3A"
               }}
               onBlur={(e) => {
                 e.currentTarget.style.borderColor = "#1A1A1A"
               }}
             />
-            <span style={{
-              position: "absolute",
-              right: "12px",
-              top: "50%",
-              transform: "translateY(-50%)",
-              color: "#4A4A4A",
-              fontSize: "14px"
-            }}>
-              🔍
-            </span>
+            <svg 
+              style={{
+                position: "absolute",
+                right: "12px",
+                top: "50%",
+                transform: "translateY(-50%)",
+                width: "14px",
+                height: "14px",
+                opacity: 0.5
+              }}
+              fill="none" 
+              stroke="#8B92A8" 
+              viewBox="0 0 24 24"
+            >
+              <circle cx="11" cy="11" r="8" strokeWidth="2"/>
+              <path d="m21 21-4.35-4.35" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
           </div>
 
           {/* Refresh Button */}
@@ -952,7 +1009,19 @@ export default function Dashboard() {
               e.currentTarget.style.color = "#8B92A8"
             }}
           >
-            <span style={{ fontSize: "14px" }}>↻</span>
+            <svg 
+              style={{ width: "14px", height: "14px" }}
+              fill="none" 
+              stroke="currentColor" 
+              viewBox="0 0 24 24"
+            >
+              <path 
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
+                strokeWidth="2" 
+                strokeLinecap="round" 
+                strokeLinejoin="round"
+              />
+            </svg>
             REFRESH
           </button>
 
@@ -967,11 +1036,11 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Symbols List */}
+        {/* Symbols List - PROFESSIONAL DESIGN */}
         <div style={{
           flex: 1,
           overflowY: "auto",
-          padding: "8px"
+          padding: "4px 0"
         }}>
           {filteredSymbols.length > 0 ? (
             filteredSymbols.map((sym, index) => (
@@ -980,33 +1049,34 @@ export default function Dashboard() {
                 className="symbol-item"
                 onClick={() => setSymbol(sym)}
                 style={{
-                  padding: "12px 16px",
-                  margin: "4px 0",
+                  padding: "12px 20px",
+                  margin: "0",
                   background: symbol === sym ? "#1A1A1A" : "transparent",
-                  border: symbol === sym ? "1px solid #2196F3" : "1px solid transparent",
-                  borderRadius: "6px",
+                  borderLeft: symbol === sym ? "3px solid #FFFFFF" : "3px solid transparent",
+                  borderRadius: "0",
                   cursor: "pointer",
-                  transition: "all 0.2s",
+                  transition: "all 0.15s ease",
                   animationDelay: `${index * 0.02}s`
                 }}
                 onMouseEnter={(e) => {
                   if (symbol !== sym) {
                     e.currentTarget.style.background = "#0F0F0F"
-                    e.currentTarget.style.borderColor = "#2A2A2A"
+                    e.currentTarget.style.borderLeftColor = "#3A3A3A"
                   }
                 }}
                 onMouseLeave={(e) => {
                   if (symbol !== sym) {
                     e.currentTarget.style.background = "transparent"
-                    e.currentTarget.style.borderColor = "transparent"
+                    e.currentTarget.style.borderLeftColor = "transparent"
                   }
                 }}
               >
                 <div style={{
-                  fontSize: "14px",
-                  fontWeight: 600,
-                  color: symbol === sym ? "#2196F3" : "#E5E7EB",
-                  fontFamily: "'JetBrains Mono', monospace"
+                  fontSize: "13px",
+                  fontWeight: symbol === sym ? 600 : 500,
+                  color: symbol === sym ? "#FFFFFF" : "#8B92A8",
+                  fontFamily: "'JetBrains Mono', monospace",
+                  letterSpacing: "0.3px"
                 }}>
                   {sym}
                 </div>
@@ -1445,7 +1515,7 @@ export default function Dashboard() {
                     padding: "16px",
                     background: activeTab === 'positions' ? '#0A0A0A' : 'transparent',
                     border: "none",
-                    borderBottom: activeTab === 'positions' ? '2px solid #2196F3' : '2px solid transparent',
+                    borderBottom: activeTab === 'positions' ? '2px solid #FFFFFF' : '2px solid transparent',
                     color: activeTab === 'positions' ? '#FFFFFF' : '#6B7280',
                     fontSize: "11px",
                     fontWeight: 700,
@@ -1463,7 +1533,7 @@ export default function Dashboard() {
                     padding: "16px",
                     background: activeTab === 'orders' ? '#0A0A0A' : 'transparent',
                     border: "none",
-                    borderBottom: activeTab === 'orders' ? '2px solid #2196F3' : '2px solid transparent',
+                    borderBottom: activeTab === 'orders' ? '2px solid #FFFFFF' : '2px solid transparent',
                     color: activeTab === 'orders' ? '#FFFFFF' : '#6B7280',
                     fontSize: "11px",
                     fontWeight: 700,
@@ -1562,7 +1632,7 @@ export default function Dashboard() {
                                   </div>
                                 </div>
                                 <div>
-                                  <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>Current</div>
+                                  <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>LTP</div>
                                   <div style={{ color: "#E5E7EB", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: "13px" }}>
                                     {currentPrice.toFixed(2)}
                                   </div>
@@ -1589,6 +1659,19 @@ export default function Dashboard() {
                                     {pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(2)}%
                                   </div>
                                 </div>
+                                {pos.stopLossPrice && (
+                                  <div style={{ gridColumn: "1 / -1", marginTop: "4px", paddingTop: "12px", borderTop: "1px solid #1A1A1A" }}>
+                                    <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>Stop Loss</div>
+                                    <div style={{ 
+                                      color: '#FF9800', 
+                                      fontFamily: "'JetBrains Mono', monospace",
+                                      fontWeight: 700,
+                                      fontSize: "13px"
+                                    }}>
+                                      {pos.stopLossPrice.toFixed(2)}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )
@@ -1716,12 +1799,17 @@ export default function Dashboard() {
                               }}>
                                 <div>
                                   <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>Limit Price</div>
-                                  <div style={{ color: "#2196F3", fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, fontSize: "13px" }}>
+                                  <div style={{ 
+                                    color: '#2196F3', 
+                                    fontFamily: "'JetBrains Mono', monospace", 
+                                    fontWeight: 700, 
+                                    fontSize: "13px" 
+                                  }}>
                                     {order.limitPrice?.toFixed(2)}
                                   </div>
                                 </div>
                                 <div>
-                                  <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>Market</div>
+                                  <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>LTP</div>
                                   <div style={{ color: "#E5E7EB", fontFamily: "'JetBrains Mono', monospace", fontWeight: 600, fontSize: "13px" }}>
                                     {currentPrice.toFixed(2)}
                                   </div>
@@ -1741,6 +1829,19 @@ export default function Dashboard() {
                                     ) : '-'}
                                   </div>
                                 </div>
+                                {order.stopLossPrice && (
+                                  <div style={{ gridColumn: "1 / -1", marginTop: "4px", paddingTop: "12px", borderTop: "1px solid rgba(33, 150, 243, 0.2)" }}>
+                                    <div style={{ color: "#6B7280", marginBottom: "4px", fontWeight: 600 }}>Stop Loss (on fill)</div>
+                                    <div style={{ 
+                                      color: '#FF9800', 
+                                      fontFamily: "'JetBrains Mono', monospace",
+                                      fontWeight: 700,
+                                      fontSize: "13px"
+                                    }}>
+                                      {order.stopLossPrice.toFixed(2)}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           )
@@ -1757,7 +1858,7 @@ export default function Dashboard() {
                       </div>
                     )}
 
-                    {/* Filled/Cancelled Orders Summary */}
+                    {/* Order History */}
                     {orders.filter(o => o.status !== 'PENDING').length > 0 && (
                       <div style={{ 
                         marginTop: "20px", 
@@ -1865,7 +1966,7 @@ export default function Dashboard() {
                     flex: 1,
                     padding: "14px",
                     background: orderType === 'MARKET' ? '#1A1A1A' : '#000000',
-                    border: orderType === 'MARKET' ? '1px solid #2196F3' : '1px solid #1A1A1A',
+                    border: orderType === 'MARKET' ? '1px solid #FFFFFF' : '1px solid #1A1A1A',
                     borderRadius: "8px",
                     color: orderType === 'MARKET' ? '#FFFFFF' : '#8B92A8',
                     fontWeight: 700,
@@ -1883,7 +1984,7 @@ export default function Dashboard() {
                     flex: 1,
                     padding: "14px",
                     background: orderType === 'LIMIT' ? '#1A1A1A' : '#000000',
-                    border: orderType === 'LIMIT' ? '1px solid #2196F3' : '1px solid #1A1A1A',
+                    border: orderType === 'LIMIT' ? '1px solid #FFFFFF' : '1px solid #1A1A1A',
                     borderRadius: "8px",
                     color: orderType === 'LIMIT' ? '#FFFFFF' : '#8B92A8',
                     fontWeight: 700,
@@ -1923,11 +2024,44 @@ export default function Dashboard() {
                     outline: "none",
                     transition: "border-color 0.2s"
                   }}
-                  onFocus={(e) => e.currentTarget.style.borderColor = "#2196F3"}
+                  onFocus={(e) => e.currentTarget.style.borderColor = "#3A3A3A"}
                   onBlur={(e) => e.currentTarget.style.borderColor = "#1A1A1A"}
                 />
               </div>
             )}
+
+            {/* Stop Loss (Optional) */}
+            <div style={{ marginBottom: "20px" }}>
+              <div style={{ fontSize: "11px", color: "#8B92A8", marginBottom: "8px", fontWeight: 700, letterSpacing: "0.5px" }}>
+                STOP LOSS (OPTIONAL)
+              </div>
+              <div style={{ fontSize: "10px", color: "#6B7280", marginBottom: "12px", lineHeight: "1.5" }}>
+                {`For BUY: Set below entry price (e.g., < ${currentPrice.toFixed(2)})`}<br/>
+                {`For SELL: Set above entry price (e.g., > ${currentPrice.toFixed(2)})`}
+              </div>
+              <input
+                type="number"
+                step="0.01"
+                value={stopLossPrice}
+                onChange={(e) => setStopLossPrice(e.target.value)}
+                placeholder="Leave empty for no stop loss"
+                style={{
+                  width: "100%",
+                  padding: "14px 16px",
+                  background: "#000000",
+                  border: "1px solid #1A1A1A",
+                  borderRadius: "8px",
+                  color: "#FFFFFF",
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  fontFamily: "'JetBrains Mono', monospace",
+                  outline: "none",
+                  transition: "border-color 0.2s"
+                }}
+                onFocus={(e) => e.currentTarget.style.borderColor = "#3A3A3A"}
+                onBlur={(e) => e.currentTarget.style.borderColor = "#1A1A1A"}
+              />
+            </div>
 
             {/* Quantity */}
             <div style={{ marginBottom: "28px" }}>
@@ -1952,7 +2086,7 @@ export default function Dashboard() {
                   outline: "none",
                   transition: "border-color 0.2s"
                 }}
-                onFocus={(e) => e.currentTarget.style.borderColor = "#2196F3"}
+                onFocus={(e) => e.currentTarget.style.borderColor = "#3A3A3A"}
                 onBlur={(e) => e.currentTarget.style.borderColor = "#1A1A1A"}
               />
             </div>
